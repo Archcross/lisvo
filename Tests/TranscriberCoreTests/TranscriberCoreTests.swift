@@ -1,0 +1,208 @@
+import Foundation
+import Testing
+@testable import TranscriberCore
+
+@Suite struct SpeakerAssignerTests {
+    let turns = [
+        SpeakerTurn(speaker: "講者 1", start: 0, end: 5),
+        SpeakerTurn(speaker: "講者 2", start: 5.2, end: 10),
+    ]
+
+    @Test func assignsSpeakerWithLargestOverlap() {
+        let segment = TranscriptSegment(start: 3, end: 9, text: "沒有字詞時間")
+        let result = SpeakerAssigner.assign(turns: turns, to: [segment])
+        #expect(result.count == 1)
+        #expect(result[0].speaker == "講者 2")
+    }
+
+    @Test func splitsSentenceWhenSpeakerChangesMidway() {
+        let words = [
+            TimedWord(text: "我先", start: 3.0, end: 3.6),
+            TimedWord(text: "說完。", start: 3.6, end: 4.8),
+            TimedWord(text: "好的", start: 5.3, end: 5.9),
+            TimedWord(text: "我接著講。", start: 5.9, end: 7.0),
+        ]
+        let segment = TranscriptSegment(start: 3, end: 7, text: "我先說完。好的我接著講。", words: words)
+        let result = SpeakerAssigner.assign(turns: turns, to: [segment])
+        #expect(result.map(\.speaker) == ["講者 1", "講者 2"])
+        #expect(result.map(\.text) == ["我先說完。", "好的我接著講。"])
+        #expect(result[1].start == 5.3)
+    }
+
+    @Test func mergesTooShortRunsIntoNeighbour() {
+        // 中間 0.3 秒被判成講者 2，是邊界誤差，應併回講者 1。
+        let shortTurns = [
+            SpeakerTurn(speaker: "講者 1", start: 0, end: 2),
+            SpeakerTurn(speaker: "講者 2", start: 2, end: 2.3),
+            SpeakerTurn(speaker: "講者 1", start: 2.3, end: 5),
+        ]
+        let words = [
+            TimedWord(text: "今天", start: 0.5, end: 1.5),
+            TimedWord(text: "的", start: 2.0, end: 2.3),
+            TimedWord(text: "會議", start: 2.4, end: 3.5),
+        ]
+        let segment = TranscriptSegment(start: 0.5, end: 3.5, text: "今天的會議", words: words)
+        let result = SpeakerAssigner.assign(turns: shortTurns, to: [segment])
+        #expect(result.count == 1)
+        #expect(result[0].speaker == "講者 1")
+        #expect(result[0].text == "今天的會議")
+    }
+
+    @Test func fallsBackToNearestSpeakerWithinTolerance() {
+        let segment = TranscriptSegment(start: 10.5, end: 11, text: "尾巴")
+        #expect(SpeakerAssigner.assign(turns: turns, to: [segment])[0].speaker == "講者 2")
+
+        let farAway = TranscriptSegment(start: 30, end: 31, text: "很遠")
+        #expect(SpeakerAssigner.assign(turns: turns, to: [farAway])[0].speaker == nil)
+    }
+
+    @Test func leavesSegmentsUntouchedWithoutTurns() {
+        let segment = TranscriptSegment(start: 0, end: 1, text: "一句")
+        #expect(SpeakerAssigner.assign(turns: [], to: [segment]) == [segment])
+    }
+}
+
+@Suite struct ExporterTests {
+    func transcript(speakers: Bool) -> Transcript {
+        Transcript(
+            sourceFileName: "會議.m4a",
+            engine: .fast,
+            language: .zhTW,
+            detectedLanguage: "zh-TW",
+            audioDuration: 10,
+            processingSeconds: 1,
+            speakerDetection: speakers,
+            segments: [
+                TranscriptSegment(start: 0, end: 1.5, text: "大家好。", speaker: "講者 1"),
+                TranscriptSegment(start: 1.5, end: 3.25, text: "開始吧。", speaker: "講者 1"),
+                TranscriptSegment(start: 3725.5, end: 3727.004, text: "好的。", speaker: "講者 2"),
+            ]
+        )
+    }
+
+    @Test func formatsClock() {
+        #expect(Exporter.clock(0) == "00:00:00")
+        #expect(Exporter.clock(3725.5) == "01:02:05")
+        #expect(Exporter.clock(3727.004, millisecondSeparator: ",") == "01:02:07,004")
+        #expect(Exporter.clock(59.9996, millisecondSeparator: ".") == "00:01:00.000")
+        #expect(Exporter.clock(-3) == "00:00:00")
+        #expect(Exporter.clock(.nan) == "00:00:00")
+    }
+
+    @Test func plainTextGroupsBySpeakerWithoutSpacesForChinese() {
+        #expect(Exporter.plainText(transcript(speakers: true)) == "講者 1：大家好。開始吧。\n\n講者 2：好的。\n")
+        #expect(Exporter.plainText(transcript(speakers: false)) == "大家好。開始吧。\n\n好的。\n")
+    }
+
+    @Test func srtHasSpeakerAndMilliseconds() {
+        let srt = Exporter.srt(transcript(speakers: true))
+        #expect(srt.hasPrefix("1\n00:00:00,000 --> 00:00:01,500\n講者 1：大家好。\n"))
+        #expect(srt.contains("3\n01:02:05,500 --> 01:02:07,004\n講者 2：好的。\n"))
+    }
+
+    @Test func vttUsesVoiceTags() {
+        let vtt = Exporter.vtt(transcript(speakers: true))
+        #expect(vtt.hasPrefix("WEBVTT\n\n00:00:00.000 --> 00:00:01.500\n<v 講者 1>大家好。\n"))
+    }
+
+    @Test func maxqdaPutsSpeakerOnOwnLine() {
+        let text = Exporter.maxqdaText(transcript(speakers: true))
+        #expect(text == "講者 1\n[00:00:00] - 大家好。 [00:00:01] - 開始吧。 \n\n講者 2\n[01:02:05] - 好的。\n")
+    }
+
+    @Test func writesAllFilesWithSuffix() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let files = try Exporter.write(transcript(speakers: true), baseName: "會議", suffix: "_快速", to: folder)
+        #expect(Set(files.map(\.lastPathComponent)) == [
+            "會議_快速.txt", "會議_快速_時間軸.txt", "會議_快速_maxqda.txt",
+            "會議_快速.srt", "會議_快速.vtt", "會議_快速.json",
+        ])
+        let decoded = try JSONDecoder().decode(Transcript.self, from: Data(contentsOf: folder.appendingPathComponent("會議_快速.json")))
+        #expect(decoded.segments.count == 3)
+    }
+}
+
+@Suite struct PolisherTests {
+    @Test func chunksJoinSameSpeakerAndRespectLimit() {
+        let long = String(repeating: "字", count: Polisher.maxCharactersPerChunk - 5)
+        let segments = [
+            TranscriptSegment(start: 0, end: 1, text: "第一句。", speaker: "講者 1"),
+            TranscriptSegment(start: 1, end: 2, text: "第二句。", speaker: "講者 1"),
+            TranscriptSegment(start: 2, end: 3, text: long, speaker: "講者 1"),
+            TranscriptSegment(start: 3, end: 4, text: "換人。", speaker: "講者 2"),
+        ]
+        let chunks = Polisher.chunks(from: segments, separator: "")
+        #expect(chunks.map(\.text) == ["第一句。第二句。", long, "換人。"])
+        #expect(chunks[0].end == 2)
+    }
+}
+
+@Suite struct TextCleanupTests {
+    @Test func tidyRemovesSpacesAroundChinesePunctuationOnly() {
+        #expect(TextCleanup.tidy(" 大家好 ，今天 開會 。 ", chinese: true) == "大家好，今天開會。")
+        #expect(TextCleanup.tidy("還是 landing page 的問題 ？", chinese: true) == "還是 landing page 的問題？")
+        #expect(TextCleanup.tidy("Hello world, again.", chinese: false) == "Hello world, again.")
+    }
+
+    @Test func convertsHalfWidthPunctuationNextToChinese() {
+        #expect(TextCleanup.tidy("大家好,今天的會議?轉換率是3.2%,比預期低.", chinese: true) == "大家好，今天的會議？轉換率是3.2%，比預期低。")
+        #expect(TextCleanup.tidy("Hello, world. 版本 1.5", chinese: true) == "Hello, world. 版本 1.5")
+    }
+
+    @Test func convertsSimplifiedToTraditional() {
+        #expect(TextCleanup.toTraditional("我们讨论后台的发展") == "我們討論後台的發展")
+    }
+}
+
+@Suite struct WhisperRegionTests {
+    @Test func mergesSameSpeakerAndPadsIntoSilenceOnly() {
+        let turns = [
+            SpeakerTurn(speaker: "講者 1", start: 1.0, end: 3.0),
+            SpeakerTurn(speaker: "講者 1", start: 3.5, end: 5.0),  // 間隔 0.5 秒，併入上一段
+            SpeakerTurn(speaker: "講者 2", start: 5.1, end: 8.0),  // 和前一段只隔 0.1 秒
+            SpeakerTurn(speaker: "講者 1", start: 8.0, end: 8.2),  // 0.2 秒且和下一段隔 1.3 秒：不送
+            SpeakerTurn(speaker: "講者 1", start: 9.5, end: 9.95),
+        ]
+        let regions = WhisperEngine.regions(from: turns, duration: 10)
+        let expected = [
+            AudioRegion(start: 0.8, end: 5.1, speaker: "講者 1"),
+            AudioRegion(start: 5.0, end: 8.2, speaker: "講者 2"),
+            AudioRegion(start: 9.3, end: 10, speaker: "講者 1"),
+        ]
+        #expect(regions.count == expected.count)
+        for (actual, wanted) in zip(regions, expected) {
+            #expect(actual.speaker == wanted.speaker)
+            #expect(abs(actual.start - wanted.start) < 1e-9)
+            #expect(abs(actual.end - wanted.end) < 1e-9)
+        }
+    }
+
+    @Test func sameSpeakerTurnsCloseTogetherAreMergedBeforeDroppingShortOnes() {
+        let turns = [
+            SpeakerTurn(speaker: "講者 1", start: 8.0, end: 8.2),
+            SpeakerTurn(speaker: "講者 1", start: 9.0, end: 9.95),
+        ]
+        let regions = WhisperEngine.regions(from: turns, duration: 10)
+        #expect(regions.count == 1)
+        #expect(abs(regions[0].start - 7.8) < 1e-9)
+        #expect(regions[0].end == 10)
+    }
+
+    @Test func slicesWithinBounds() {
+        let samples = [Float](repeating: 0, count: 16_000)
+        #expect(WhisperEngine.slice(samples, region: AudioRegion(start: 0.5, end: 2, speaker: nil)).count == 8_000)
+        #expect(WhisperEngine.slice(samples, region: AudioRegion(start: 2, end: 3, speaker: nil)).isEmpty)
+    }
+}
+
+@Suite struct PipelineTests {
+    @Test func uniqueFolderAddsCounterWhenTaken() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let first = TranscriptionPipeline.uniqueFolder(in: base, baseName: "會議")
+        try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+        let second = TranscriptionPipeline.uniqueFolder(in: base, baseName: "會議")
+        #expect(second.lastPathComponent == first.lastPathComponent + " (2)")
+    }
+}

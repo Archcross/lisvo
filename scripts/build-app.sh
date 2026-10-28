@@ -16,6 +16,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/TranscriberApp" "$APP/Contents/MacOS/Transcriber"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 [[ -f "$ROOT/Resources/AppIcon.icns" ]] && cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/"
+# 各語言的 App 名稱（例如繁體中文顯示「聽哦」）。
+for lproj in "$ROOT/Resources"/*.lproj(N); do
+  cp -R "$lproj" "$APP/Contents/Resources/"
+done
 
 # SwiftPM 套件的資源包（例如 FluidAudio 的音素表）放進 Resources。
 for bundle in "$BIN_DIR"/*.bundle(N); do

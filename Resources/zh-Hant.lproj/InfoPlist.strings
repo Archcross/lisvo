@@ -1,0 +1,3 @@
+/* 系統語言是繁體中文時，Finder、Dock 與選單列顯示的名稱。其他語言用 Info.plist 的 Lisvo。 */
+CFBundleName = "聽哦";
+CFBundleDisplayName = "聽哦";

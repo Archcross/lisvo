@@ -14,6 +14,13 @@
 	<string>Lisvo</string>
 	<key>CFBundleDisplayName</key>
 	<string>Lisvo</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hant</string>
+	</array>
+	<key>LSHasLocalizedDisplayName</key>
+	<true/>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

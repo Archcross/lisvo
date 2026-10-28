@@ -7,7 +7,7 @@ struct TranscriberApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        Window("逐字稿", id: "main") {
+        Window("Lisvo", id: "main") {
             ContentView()
                 .environment(model)
                 .onAppear { appDelegate.model = model }

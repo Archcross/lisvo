@@ -1,5 +1,5 @@
 #!/bin/zsh
-# 編譯並組成 build/逐字稿.app，用本機臨時簽署（ad-hoc），只能在這台 Mac 上執行。
+# 編譯並組成 build/Lisvo.app，用本機臨時簽署（ad-hoc），只能在這台 Mac 上執行。
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
@@ -9,7 +9,7 @@ CONFIG="${1:-release}"
 swift build -c "$CONFIG" --product TranscriberApp
 BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 
-APP="$ROOT/build/逐字稿.app"
+APP="$ROOT/build/Lisvo.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 

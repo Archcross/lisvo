@@ -1,4 +1,4 @@
-# 逐字稿（Transcriber）
+# Lisvo
 
 Mac 原生的語音轉文字 App：分講者、輸出時間軸，全部在本機處理，不上傳錄音。
 
@@ -37,7 +37,7 @@ Mac 原生的語音轉文字 App：分講者、輸出時間軸，全部在本機
 ## 開發
 
 ```bash
-# 組成 build/逐字稿.app（本機臨時簽署）
+# 組成 build/Lisvo.app（本機臨時簽署）
 scripts/build-app.sh
 
 # 命令列測試：和 App 走同一套流程

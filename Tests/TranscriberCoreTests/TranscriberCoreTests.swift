@@ -110,15 +110,15 @@ import Testing
         #expect(text == "講者 1\n[00:00:00] - 大家好。 [00:00:01] - 開始吧。 \n\n講者 2\n[01:02:05] - 好的。\n")
     }
 
-    @Test func writesAllFilesWithSuffix() throws {
+    @Test func writesAllFiles() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let files = try Exporter.write(transcript(speakers: true), baseName: "會議", suffix: "_快速", to: folder)
+        let files = try Exporter.write(transcript(speakers: true), baseName: "會議", to: folder)
         #expect(Set(files.map(\.lastPathComponent)) == [
-            "會議_快速.txt", "會議_快速_時間軸.txt", "會議_快速_maxqda.txt",
-            "會議_快速.srt", "會議_快速.vtt", "會議_快速.json",
+            "會議.txt", "會議_時間軸.txt", "會議_maxqda.txt",
+            "會議.srt", "會議.vtt", "會議.json",
         ])
-        let decoded = try JSONDecoder().decode(Transcript.self, from: Data(contentsOf: folder.appendingPathComponent("會議_快速.json")))
+        let decoded = try JSONDecoder().decode(Transcript.self, from: Data(contentsOf: folder.appendingPathComponent("會議.json")))
         #expect(decoded.segments.count == 3)
     }
 }

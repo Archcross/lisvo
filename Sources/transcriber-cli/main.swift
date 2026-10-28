@@ -2,12 +2,12 @@ import Foundation
 import TranscriberCore
 
 // 命令列測試工具：跑和 App 完全相同的流程，用來驗證核心邏輯與量測速度。
-// 用法：transcriber-cli <音檔> [--mode fast|accurate|both] [--lang zhTW|yue|en|ja|ko|auto]
+// 用法：transcriber-cli <音檔> [--mode fast|accurate] [--lang zhTW|yue|en|ja|ko|auto]
 //       [--speakers auto|N|off] [--polish] [--out 資料夾]
 
 struct Options {
     var input: URL
-    var engines: [EngineKind] = [.fast]
+    var engine: EngineKind = .fast
     var language: TranscriptionLanguage = .zhTW
     var speakerDetection = true
     var speakerCount: Int?
@@ -16,7 +16,7 @@ struct Options {
 }
 
 func usage() -> Never {
-    FileHandle.standardError.write(Data("用法：transcriber-cli <音檔> [--mode fast|accurate|both] [--lang zhTW|yue|en|ja|ko|auto] [--speakers auto|N|off] [--polish] [--out 資料夾]\n".utf8))
+    FileHandle.standardError.write(Data("用法：transcriber-cli <音檔> [--mode fast|accurate] [--lang zhTW|yue|en|ja|ko|auto] [--speakers auto|N|off] [--polish] [--out 資料夾]\n".utf8))
     exit(2)
 }
 
@@ -34,12 +34,8 @@ func parse() -> Options {
         }
         switch flag {
         case "--mode":
-            switch value() {
-            case "fast": options.engines = [.fast]
-            case "accurate": options.engines = [.accurate]
-            case "both": options.engines = [.fast, .accurate]
-            default: usage()
-            }
+            guard let engine = EngineKind(rawValue: value()) else { usage() }
+            options.engine = engine
         case "--lang":
             guard let language = TranscriptionLanguage(rawValue: value()) else { usage() }
             options.language = language
@@ -65,7 +61,7 @@ func parse() -> Options {
 
 let options = parse()
 let settings = JobSettings(
-    engines: options.engines,
+    engine: options.engine,
     language: options.language,
     speakerDetection: options.speakerDetection,
     speakerCount: options.speakerCount,
@@ -79,16 +75,16 @@ func elapsed() -> String { String(format: "%6.1fs", Date().timeIntervalSince(sta
 do {
     let result = try await TranscriptionPipeline.run(input: options.input, settings: settings) { event in
         switch event {
-        case .stage(let engine, let text):
-            print("\(elapsed()) [\(engine?.displayName ?? "共用")] \(text)")
+        case .stage(let track, let text):
+            print("\(elapsed()) [\(track == .speakers ? "講者" : options.engine.displayName)] \(text)")
         case .progress:
             break
-        case .liveSegments(let engine, let segments):
+        case .liveSegments(let segments):
             for segment in segments {
-                print("\(elapsed())   即時[\(engine.displayName)] \(Exporter.clock(segment.start)) \(segment.text)")
+                print("\(elapsed())   即時 \(Exporter.clock(segment.start)) \(segment.text)")
             }
-        case .transcriptReady(let engine, let transcript):
-            print("\(elapsed()) [\(engine.displayName)] 完成，處理 \(String(format: "%.1f", transcript.processingSeconds)) 秒，音檔 \(String(format: "%.1f", transcript.audioDuration)) 秒")
+        case .transcriptReady(let transcript):
+            print("\(elapsed()) [\(transcript.engine.displayName)] 完成，處理 \(String(format: "%.1f", transcript.processingSeconds)) 秒，音檔 \(String(format: "%.1f", transcript.audioDuration)) 秒")
             for segment in transcript.segments {
                 print(String(format: "  [%6.2f-%6.2f] ", segment.start, segment.end) + "\(segment.speaker ?? "-")：\(segment.text)")
             }

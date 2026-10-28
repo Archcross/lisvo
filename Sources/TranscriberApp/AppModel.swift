@@ -4,30 +4,6 @@ import Observation
 import TranscriberCore
 import UniformTypeIdentifiers
 
-enum ModeChoice: String, CaseIterable, Identifiable {
-    case fast
-    case accurate
-    case both
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .fast: "快速"
-        case .accurate: "精準"
-        case .both: "比較"
-        }
-    }
-
-    var engines: [EngineKind] {
-        switch self {
-        case .fast: [.fast]
-        case .accurate: [.accurate]
-        case .both: [.fast, .accurate]
-        }
-    }
-}
-
 /// 講者人數選單：0 = 不分講者，-1 = 自動判斷，其餘為指定人數。
 enum SpeakerChoice {
     static let off = 0
@@ -60,11 +36,11 @@ final class AppModel {
     var outputDirectory: URL {
         didSet { UserDefaults.standard.set(outputDirectory.path, forKey: Keys.output) }
     }
-    var mode: ModeChoice {
+    var mode: EngineKind {
         didSet {
             UserDefaults.standard.set(mode.rawValue, forKey: Keys.mode)
             // 快速模式需要指定語言，切過去時把「自動偵測」換成預設語言。
-            if mode != .accurate, language == .auto { language = .zhTW }
+            if mode == .fast, language == .auto { language = .zhTW }
         }
     }
     var language: TranscriptionLanguage {
@@ -82,12 +58,13 @@ final class AppModel {
     private(set) var progress: Double?
     private(set) var sideStageText = ""
     private(set) var notices: [String] = []
-    /// 每個模式目前要顯示的句子。轉錄中是即時結果，完成後換成已對好講者的最終結果。
-    private(set) var segments: [EngineKind: [TranscriptSegment]] = [:]
-    private(set) var finalized: Set<EngineKind> = []
-    var visibleEngine: EngineKind = .fast
-    /// 原始音檔的播放器。點逐字稿的某句就從那裡播。
+    /// 目前要顯示的句子。轉錄中是即時結果，完成後換成已對好講者的最終結果。
+    private(set) var segments: [TranscriptSegment] = []
+    private(set) var isFinalized = false
+    /// 原始音檔的播放器。點逐字稿的某句就只播那一句。
     let playback = AudioPlayback()
+    /// 最後點的那一句，用來標亮。
+    private var playingSegmentID: UUID?
 
     private var job: Task<Void, Never>?
 
@@ -115,11 +92,12 @@ final class AppModel {
             outputDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("逐字稿", isDirectory: true)
         }
-        mode = defaults.string(forKey: Keys.mode).flatMap(ModeChoice.init(rawValue:)) ?? .fast
+        // 舊版存過「比較」（both），讀不到對應的模式時退回快速。
+        mode = defaults.string(forKey: Keys.mode).flatMap(EngineKind.init(rawValue:)) ?? .fast
         language = defaults.string(forKey: Keys.language).flatMap(TranscriptionLanguage.init(rawValue:)) ?? .zhTW
         speakerChoice = defaults.object(forKey: Keys.speakers) as? Int ?? SpeakerChoice.auto
         polish = defaults.bool(forKey: Keys.polish)
-        if mode != .accurate, language == .auto { language = .zhTW }
+        if mode == .fast, language == .auto { language = .zhTW }
     }
 
     // MARK: - 選檔
@@ -128,9 +106,10 @@ final class AppModel {
         guard !isRunning else { return }
         inputURL = url
         playback.load(url)
+        playingSegmentID = nil
         phase = .idle
-        segments = [:]
-        finalized = []
+        segments = []
+        isFinalized = false
         notices = []
         stageText = ""
         sideStageText = ""
@@ -169,14 +148,22 @@ final class AppModel {
 
     // MARK: - 播放
 
+    /// 只播這一句：從句首播到句尾就停。
     func play(_ segment: TranscriptSegment) {
-        playback.play(from: segment.start)
+        playingSegmentID = segment.id
+        playback.playClip(from: segment.start, to: segment.end)
     }
 
-    /// 正在播的那一句：開始時間不晚於目前播放位置的最後一句。
-    /// 句子之間的空檔仍標著上一句，畫面才不會一閃一閃。
-    func activeSegmentID(in segments: [TranscriptSegment]) -> UUID? {
+    /// 要標亮的那一句。
+    /// - 點過某句：標那一句。不用播放時間反推，因為句尾的時間常常等於下一句的開頭，播完會誤標到下一句。
+    /// - 沒點過、直接按空白鍵一路播：標開始時間不晚於目前播放位置的最後一句。
+    ///   句子之間的空檔仍標著上一句，畫面才不會一閃一閃。
+    var activeSegmentID: UUID? {
         guard playback.hasStarted, !segments.isEmpty else { return nil }
+        // 轉錄完成時句子會整批換成最終結果，舊的 id 找不到，就改用播放時間推算。
+        if playback.clip != nil, let id = playingSegmentID, segments.contains(where: { $0.id == id }) {
+            return id
+        }
         let time = playback.currentTime
         var low = 0
         var high = segments.count - 1
@@ -199,7 +186,7 @@ final class AppModel {
     func start() {
         guard let inputURL, !isRunning else { return }
         let settings = JobSettings(
-            engines: mode.engines,
+            engine: mode,
             language: language,
             speakerDetection: speakerChoice != SpeakerChoice.off,
             speakerCount: speakerChoice > 0 ? speakerChoice : nil,
@@ -208,13 +195,13 @@ final class AppModel {
         )
 
         phase = .running
-        segments = [:]
-        finalized = []
+        segments = []
+        isFinalized = false
+        playingSegmentID = nil
         notices = []
         stageText = "準備中"
         sideStageText = ""
         progress = nil
-        visibleEngine = settings.engines[0]
 
         // 流程在背景跑，事件依序排進這條串流，由主執行緒照順序更新畫面。
         let (events, continuation) = AsyncStream.makeStream(of: PipelineEvent.self, bufferingPolicy: .unbounded)
@@ -260,28 +247,26 @@ final class AppModel {
     private func handle(_ event: PipelineEvent) {
         guard isRunning else { return }
         switch event {
-        case .stage(let engine, let text):
-            if let engine {
-                stageText = mode == .both ? "\(engine.displayName)：\(text)" : text
+        case .stage(let track, let text):
+            switch track {
+            case .transcription:
+                stageText = text
                 progress = nil
-            } else {
+            case .speakers:
                 // 分講者和轉錄同時跑，分開顯示，避免兩邊的進度互相覆蓋。
-                if segments.isEmpty, finalized.isEmpty { stageText = text } else { sideStageText = text }
+                if segments.isEmpty, !isFinalized { stageText = text } else { sideStageText = text }
             }
-        case .progress(let engine, let value):
-            if engine != nil { progress = value }
-        case .liveSegments(let engine, let newSegments):
-            guard !finalized.contains(engine) else { return }
-            var current = segments[engine] ?? []
-            current.append(contentsOf: newSegments)
-            current.sort { $0.start < $1.start }
-            segments[engine] = current
-            if mode != .both { visibleEngine = engine }
-        case .transcriptReady(let engine, let transcript):
-            segments[engine] = transcript.segments
-            finalized.insert(engine)
+        case .progress(let track, let value):
+            if track == .transcription { progress = value }
+        case .liveSegments(let newSegments):
+            guard !isFinalized else { return }
+            segments.append(contentsOf: newSegments)
+            segments.sort { $0.start < $1.start }
+        case .transcriptReady(let transcript):
+            segments = transcript.segments
+            isFinalized = true
         case .notice(let text):
-            // 比較模式兩個模式可能各送一次同樣的提示。
+            // 保險起見，同樣的提示只顯示一次。
             if !notices.contains(text) { notices.append(text) }
         }
     }

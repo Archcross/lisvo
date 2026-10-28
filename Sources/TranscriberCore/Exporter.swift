@@ -2,10 +2,8 @@ import Foundation
 
 /// 把逐字稿寫成各種檔案。格式對齊 aTrain 的輸出，另外加上 VTT 與潤飾版。
 public enum Exporter {
-    /// - Parameter suffix: 「兩種都跑」時用來區分檔名，例如「_快速」。
-    public static func write(_ transcript: Transcript, baseName: String, suffix: String, to folder: URL) throws -> [URL] {
+    public static func write(_ transcript: Transcript, baseName name: String, to folder: URL) throws -> [URL] {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let name = baseName + suffix
         var outputs: [(String, String)] = [
             ("\(name).txt", plainText(transcript)),
             ("\(name)_時間軸.txt", timestampedText(transcript)),

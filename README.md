@@ -7,14 +7,13 @@ Mac 原生的語音轉文字 App：分講者、輸出時間軸，全部在本機
 - **兩種辨識模式**
   - 快速：Mac 內建語音辨識（Speech 框架的 SpeechTranscriber）。不用下載模型，要指定語言。
   - 精準：Whisper large-v3-turbo（WhisperKit，Core ML 版）。第一次使用會下載模型，可以自動偵測語言。
-  - 比較：兩種都跑，結果並排，各自輸出一組檔案。
 - **兩種模式對講者的方式不同**
   - 快速：先轉整個檔案，再用每個片語的時間對到講者，一句話中途換人會切開。文字最早出現。
   - 精準：先分講者，再把每位講者連續說話的那段聲音分別交給 Whisper。WhisperKit 對中文的逐字時間不可靠，
     用字詞時間對講者會錯，所以改成這樣；代價是少了跨講者的前後文，偶爾會有錯字。
 - **分講者**：FluidAudio 的離線 VBx 流程（pyannote 分段＋WeSpeaker 聲紋），跑在 Neural Engine。可自動判斷人數或指定人數。
 - **AI 潤飾**（選用）：Mac 內建 Foundation Models，修錯字、補標點、刪口頭禪。潤飾版另存，原文與時間軸不變。
-- **點句播放**：點逐字稿任何一句，就從那句的開始時間播放原始音檔；正在播的那句會標底色。空白鍵播放／暫停，右鍵可拷貝該句。
+- **點句播放**：點逐字稿任何一句，只播那一句的原始音檔，播到句尾自動停；那句會標底色。空白鍵暫停／繼續，播完再按會重播同一句。右鍵可拷貝該句。
 - **邊轉邊看**：辨識出來的句子即時顯示。精準模式一開始就帶講者；快速模式的講者等分講者完成後補上。
 
 ## 輸出
@@ -42,7 +41,7 @@ Mac 原生的語音轉文字 App：分講者、輸出時間軸，全部在本機
 scripts/build-app.sh
 
 # 命令列測試：和 App 走同一套流程
-swift run transcriber-cli 音檔.m4a --mode both --lang zhTW --speakers auto --polish
+swift run transcriber-cli 音檔.m4a --mode accurate --lang zhTW --speakers auto --polish
 ```
 
 模型存放位置：

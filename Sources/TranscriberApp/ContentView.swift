@@ -62,12 +62,12 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 Group {
                 Picker("模式", selection: $model.mode) {
-                    ForEach(ModeChoice.allCases) { Text($0.label).tag($0) }
+                    ForEach(EngineKind.allCases) { Text($0.displayName).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 180)
-                .help("快速：Mac 內建辨識。精準：Whisper 模型。比較：兩種都跑，結果並排。")
+                .frame(width: 120)
+                .help("快速：Mac 內建辨識。精準：Whisper 模型。")
 
                 Picker("語言", selection: $model.language) {
                     ForEach(model.languageOptions) { Text($0.displayName).tag($0) }
@@ -104,29 +104,15 @@ struct ContentView: View {
 
     // MARK: - 中間：逐字稿
 
-    @ViewBuilder
     private var transcript: some View {
-        @Bindable var model = model
-        VStack(spacing: 0) {
-            if model.mode == .both, !model.segments.isEmpty {
-                Picker("顯示", selection: $model.visibleEngine) {
-                    ForEach(EngineKind.allCases) { Text($0.displayName).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 160)
-                .padding(.vertical, 8)
-            }
-            let segments = model.segments[model.visibleEngine] ?? []
-            TranscriptList(
-                segments: segments,
-                isFinal: model.finalized.contains(model.visibleEngine),
-                isRunning: model.isRunning,
-                hasInput: model.inputURL != nil,
-                activeID: model.activeSegmentID(in: segments),
-                onSelect: model.play
-            )
-        }
+        TranscriptList(
+            segments: model.segments,
+            isFinal: model.isFinalized,
+            isRunning: model.isRunning,
+            hasInput: model.inputURL != nil,
+            activeID: model.activeSegmentID,
+            onSelect: model.play
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .textBackgroundColor))
     }
@@ -236,10 +222,10 @@ struct TranscriptList: View {
                     SegmentRow(segment: segment, isActive: segment.id == activeID)
                         .id(segment.id)
                         .contentShape(Rectangle())
-                        // 點一下就從這句的開始時間播放。
+                        // 點一下只播這一句，播到句尾自動停。
                         .onTapGesture { onSelect(segment) }
                         .contextMenu {
-                            Button("從這裡播放") { onSelect(segment) }
+                            Button("播放這句") { onSelect(segment) }
                             Button("拷貝這句") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(segment.text, forType: .string)
@@ -300,7 +286,7 @@ struct PlaybackControls: View {
             }
             .buttonStyle(.borderless)
             .keyboardShortcut(.space, modifiers: [])
-            .help(playback.isPlaying ? "暫停（空白鍵）" : "播放（空白鍵）；也可以直接點逐字稿的某一句")
+            .help(playback.isPlaying ? "暫停（空白鍵）" : (playback.clip == nil ? "播放（空白鍵）；點逐字稿的某一句就只播那句" : "重播或繼續播這一句（空白鍵）"))
 
             Text("\(Exporter.clock(playback.currentTime)) / \(Exporter.clock(playback.duration))")
                 .font(.system(.callout, design: .monospaced))

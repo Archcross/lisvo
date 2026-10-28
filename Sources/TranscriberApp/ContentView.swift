@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TranscriberCore
 import UniformTypeIdentifiers
@@ -116,11 +117,14 @@ struct ContentView: View {
                 .frame(width: 160)
                 .padding(.vertical, 8)
             }
+            let segments = model.segments[model.visibleEngine] ?? []
             TranscriptList(
-                segments: model.segments[model.visibleEngine] ?? [],
+                segments: segments,
                 isFinal: model.finalized.contains(model.visibleEngine),
                 isRunning: model.isRunning,
-                hasInput: model.inputURL != nil
+                hasInput: model.inputURL != nil,
+                activeID: model.activeSegmentID(in: segments),
+                onSelect: model.play
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -131,6 +135,9 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack(spacing: 10) {
+            if model.playback.isLoaded {
+                PlaybackControls(playback: model.playback)
+            }
             if model.isRunning {
                 if let progress = model.progress {
                     ProgressView(value: progress)
@@ -209,6 +216,9 @@ struct TranscriptList: View {
     let isFinal: Bool
     let isRunning: Bool
     let hasInput: Bool
+    /// 正在播放的那一句，標上底色。
+    let activeID: UUID?
+    let onSelect: (TranscriptSegment) -> Void
 
     var body: some View {
         if segments.isEmpty {
@@ -223,9 +233,24 @@ struct TranscriptList: View {
         } else {
             ScrollViewReader { proxy in
                 List(segments) { segment in
-                    SegmentRow(segment: segment)
+                    SegmentRow(segment: segment, isActive: segment.id == activeID)
                         .id(segment.id)
+                        .contentShape(Rectangle())
+                        // 點一下就從這句的開始時間播放。
+                        .onTapGesture { onSelect(segment) }
+                        .contextMenu {
+                            Button("從這裡播放") { onSelect(segment) }
+                            Button("拷貝這句") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(segment.text, forType: .string)
+                            }
+                        }
                         .listRowSeparator(.hidden)
+                        .listRowBackground(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(segment.id == activeID ? Color.accentColor.opacity(0.16) : Color.clear)
+                                .padding(.horizontal, 6)
+                        )
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -241,12 +266,13 @@ struct TranscriptList: View {
 
 struct SegmentRow: View {
     let segment: TranscriptSegment
+    let isActive: Bool
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(Exporter.clock(segment.start))
                 .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(isActive ? Color.accentColor : Color(nsColor: .tertiaryLabelColor))
             // 快速模式轉錄中還沒有講者，等分講者完成才補上；精準模式一開始就有。
             if let speaker = segment.speaker {
                 Text(speaker)
@@ -254,11 +280,32 @@ struct SegmentRow: View {
                     .foregroundStyle(SpeakerPalette.color(for: speaker))
                     .frame(width: 56, alignment: .leading)
             }
+            // 不開文字選取：選取會吃掉點擊，點句子播放就失效。要拷貝用右鍵「拷貝這句」或匯出檔。
             Text(segment.text)
-                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// 底部的播放／暫停與時間。空白鍵也能播放／暫停。
+struct PlaybackControls: View {
+    let playback: AudioPlayback
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: playback.togglePlayPause) {
+                Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                    .frame(width: 14)
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut(.space, modifiers: [])
+            .help(playback.isPlaying ? "暫停（空白鍵）" : "播放（空白鍵）；也可以直接點逐字稿的某一句")
+
+            Text("\(Exporter.clock(playback.currentTime)) / \(Exporter.clock(playback.duration))")
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

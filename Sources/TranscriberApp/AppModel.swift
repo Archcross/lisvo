@@ -86,6 +86,8 @@ final class AppModel {
     private(set) var segments: [EngineKind: [TranscriptSegment]] = [:]
     private(set) var finalized: Set<EngineKind> = []
     var visibleEngine: EngineKind = .fast
+    /// 原始音檔的播放器。點逐字稿的某句就從那裡播。
+    let playback = AudioPlayback()
 
     private var job: Task<Void, Never>?
 
@@ -125,6 +127,7 @@ final class AppModel {
     func setInput(_ url: URL) {
         guard !isRunning else { return }
         inputURL = url
+        playback.load(url)
         phase = .idle
         segments = [:]
         finalized = []
@@ -162,6 +165,33 @@ final class AppModel {
     func revealResult() {
         guard case .finished(let folder) = phase else { return }
         NSWorkspace.shared.activateFileViewerSelecting([folder])
+    }
+
+    // MARK: - 播放
+
+    func play(_ segment: TranscriptSegment) {
+        playback.play(from: segment.start)
+    }
+
+    /// 正在播的那一句：開始時間不晚於目前播放位置的最後一句。
+    /// 句子之間的空檔仍標著上一句，畫面才不會一閃一閃。
+    func activeSegmentID(in segments: [TranscriptSegment]) -> UUID? {
+        guard playback.hasStarted, !segments.isEmpty else { return nil }
+        let time = playback.currentTime
+        var low = 0
+        var high = segments.count - 1
+        var found: Int?
+        // segments 已依開始時間排序，用二分搜尋。
+        while low <= high {
+            let mid = (low + high) / 2
+            if segments[mid].start <= time {
+                found = mid
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return found.map { segments[$0].id }
     }
 
     // MARK: - 執行

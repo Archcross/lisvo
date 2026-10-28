@@ -206,3 +206,19 @@ import Testing
         #expect(second.lastPathComponent == first.lastPathComponent + " (2)")
     }
 }
+
+@Suite struct ModelLocationTests {
+    @Test func allModelsLiveUnderLisvoFolder() {
+        #expect(ModelLocations.whisper.path.hasSuffix("Application Support/Lisvo/Models/Whisper"))
+        #expect(ModelLocations.diarization.path.hasSuffix("Application Support/Lisvo/Models/Diarization"))
+        #expect(WhisperModelStore.modelsDirectory == ModelLocations.whisper)
+    }
+
+    @Test func whisperMarkerStoresPathRelativeToModelsFolder() {
+        let inside = WhisperModelStore.modelsDirectory
+            .appendingPathComponent("models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930")
+        #expect(WhisperModelStore.relativePath(of: inside) == "models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930")
+        // 不在模型資料夾裡時保留完整路徑，讀回來時才找得到。
+        #expect(WhisperModelStore.relativePath(of: URL(fileURLWithPath: "/tmp/whisper")) == "/tmp/whisper")
+    }
+}

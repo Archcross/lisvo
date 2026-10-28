@@ -58,7 +58,8 @@ public actor Diarizer {
     }
 
     private nonisolated static func prepare(_ box: DiarizerManagerBox) async throws {
-        try await box.manager.prepareModels()
+        try FileManager.default.createDirectory(at: ModelLocations.diarization, withIntermediateDirectories: true)
+        try await box.manager.prepareModels(directory: ModelLocations.diarization)
     }
 
     /// 模型給的講者代號沒有順序意義。改成照第一次開口的順序叫「講者 1、講者 2…」。

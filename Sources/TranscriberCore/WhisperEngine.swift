@@ -18,12 +18,10 @@ public actor WhisperModelStore {
 
     private var loaded: WhisperKitBox?
 
-    public static var modelsDirectory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Transcriber/Models", isDirectory: true)
-    }
+    public static var modelsDirectory: URL { ModelLocations.whisper }
 
     /// 記住模型下載到哪個資料夾，下次直接從本機載入，不必連網確認。
+    /// 存的是相對於 modelsDirectory 的路徑，整個資料夾搬家後仍然有效。
     private static var locationMarker: URL {
         modelsDirectory.appendingPathComponent("whisper-model-location.txt")
     }
@@ -37,9 +35,18 @@ public actor WhisperModelStore {
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !path.isEmpty
         else { return nil }
-        let folder = URL(fileURLWithPath: path, isDirectory: true)
+        let folder = path.hasPrefix("/")
+            ? URL(fileURLWithPath: path, isDirectory: true)
+            : modelsDirectory.appendingPathComponent(path, isDirectory: true)
         let encoder = folder.appendingPathComponent("AudioEncoder.mlmodelc")
         return FileManager.default.fileExists(atPath: encoder.path) ? folder : nil
+    }
+
+    /// 模型在 modelsDirectory 裡時存相對路徑；不在裡面（理論上不會發生）就存完整路徑。
+    static func relativePath(of folder: URL) -> String {
+        let base = modelsDirectory.standardizedFileURL.path + "/"
+        let path = folder.standardizedFileURL.path
+        return path.hasPrefix(base) ? String(path.dropFirst(base.count)) : path
     }
 
     func model(onEvent: @escaping @Sendable (EngineEvent) -> Void) async throws -> WhisperKitBox {
@@ -58,7 +65,7 @@ public actor WhisperModelStore {
                     onEvent(.progress(progress.fractionCompleted))
                 }
             )
-            try folder.path.write(to: Self.locationMarker, atomically: true, encoding: .utf8)
+            try Self.relativePath(of: folder).write(to: Self.locationMarker, atomically: true, encoding: .utf8)
         }
 
         onEvent(.status("載入 Whisper 模型（第一次會比較久）"))

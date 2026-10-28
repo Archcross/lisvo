@@ -46,8 +46,8 @@ swift run transcriber-cli 音檔.m4a --mode accurate --lang zhTW --speakers auto
 
 模型存放位置：
 
-- Whisper：`~/Library/Application Support/Transcriber/Models`
-- 分講者：`~/Library/Application Support/FluidAudio/Models`
+- Whisper：`~/Library/Application Support/Lisvo/Models/Whisper`
+- 分講者：`~/Library/Application Support/Lisvo/Models/Diarization`
 - 快速模式的語言包由系統管理
 
 ## 程式結構

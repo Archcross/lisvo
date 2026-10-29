@@ -123,8 +123,12 @@ final class AppModel {
 
     /// 這次字幕有沒有開翻譯；決定字幕視窗要不要顯示譯文那一行。
     private(set) var isTranslatingLive = false
-    /// 字幕視窗的譯文：目前這段裡最後兩句已翻好的句子。
-    private(set) var liveTranslationLine = ""
+    /// 字幕視窗的譯文：最近幾句定案的譯文，接上正在說的這段已翻好的部分。
+    private(set) var liveTranslationText = ""
+    /// 翻譯的狀態訊息（例如下載語言包中），有的話字幕視窗的譯文區顯示它。
+    private(set) var translationNotice = ""
+    /// 定案當下字幕上顯示的譯文。整句重翻好之前先顯示它，譯文才不會在定案那一刻消失。
+    private var frozenTranslations: [UUID: String] = [:]
     /// 要下載的翻譯語言包。設定後主視窗會跳出系統的下載提示，下載完呼叫 translationDownloadFinished。
     private(set) var translationDownloadRequest: TranslationSession.Configuration?
     private var liveTranslationTarget: TranslationTarget = .off
@@ -359,11 +363,14 @@ final class AppModel {
 
     // MARK: - 即時字幕
 
-    /// 浮動字幕的兩行：有暫定文字時顯示「上一句定案＋正在說的」，沒有時顯示最後兩句定案。
-    var subtitleLines: (previous: String, current: String) {
-        if !liveVolatile.isEmpty { return (segments.last?.text ?? "", liveVolatile) }
-        if segments.count >= 2 { return (segments[segments.count - 2].text, segments[segments.count - 1].text) }
-        return ("", segments.last?.text ?? "")
+    /// 字幕視窗保留最近幾句定案。視窗只顯示最後幾行，更早的早就捲出去了；只留幾句，每次更新重新排版的文字才不會越來越長。
+    static let subtitleHistory = 3
+
+    /// 字幕視窗的原文：最近幾句定案，接上正在說的。字幕視窗從底部往上滾，舊的從上緣捲出去。
+    var subtitleSourceText: String {
+        var parts = segments.suffix(Self.subtitleHistory).map(\.text)
+        if !liveVolatile.isEmpty { parts.append(liveVolatile) }
+        return parts.joined(separator: liveLanguage.separatesWordsWithSpaces ? " " : "")
     }
 
     func toggleLive() {
@@ -501,13 +508,17 @@ final class AppModel {
             liveUnfinished = remainder
             requestUnfinishedTranslation()
         case .finalized(let segment):
+            // 這時 liveVolatile 還是這句定案前的暫定文字，記下字幕上正顯示的譯文。
+            frozenTranslations[segment.id] = currentTranslation()
             segments.append(segment)
+            let kept = Set(segments.suffix(Self.subtitleHistory).map(\.id))
+            frozenTranslations = frozenTranslations.filter { kept.contains($0.key) }
             liveUnfinished = ""
             unfinishedTranslation = nil
             // 定案後按整句重翻一次：前後文完整、翻得比較準，存檔的譯文用這個。
             requestTranslation(of: SentenceSplitter.allSentences(segment.text))
         }
-        refreshTranslationLine()
+        refreshTranslationText()
     }
 
     // MARK: - 即時翻譯
@@ -529,7 +540,7 @@ final class AppModel {
         case .installed:
             startTranslationWorker(source: source, target: target)
         case .supported:
-            liveTranslationLine = "下載翻譯語言包中…"
+            translationNotice = "下載翻譯語言包中…"
             translationDownloadRequest = TranslationSession.Configuration(source: source, target: target)
         case .unsupported:
             isTranslatingLive = false
@@ -544,8 +555,8 @@ final class AppModel {
         guard let request = translationDownloadRequest else { return }
         translationDownloadRequest = nil
         guard isLive, isTranslatingLive, let source = request.source, let target = request.target else { return }
+        translationNotice = ""
         if await LiveTranslator.status(from: source, to: target) == .installed {
-            liveTranslationLine = ""
             startTranslationWorker(source: source, target: target)
             // 下載期間已經定案的句子補翻，存檔時譯文才完整。暫定文字等下一次更新時自然會排進來。
             for segment in segments {
@@ -553,12 +564,11 @@ final class AppModel {
             }
         } else {
             isTranslatingLive = false
-            liveTranslationLine = ""
             notices.append("沒有下載翻譯語言包，這次字幕不翻譯。")
         }
     }
 
-    /// 一條工作依序翻譯排進來的項目，翻好就更新字幕的譯文行。
+    /// 一條工作依序翻譯排進來的項目，翻好就更新字幕的譯文。
     /// 只用一條：TranslationSession 不能同時翻兩段（見 LiveTranslator）。
     private func startTranslationWorker(source: Locale.Language, target: Locale.Language) {
         let translator = LiveTranslator(source: source, target: target)
@@ -585,7 +595,7 @@ final class AppModel {
                         self.unfinishedTranslation = (source, translated)
                     }
                 }
-                self?.refreshTranslationLine()
+                self?.refreshTranslationText()
             }
         }
     }
@@ -611,25 +621,34 @@ final class AppModel {
         translationQueue.yield(.unfinished)
     }
 
-    /// 譯文行：目前這段文字裡最後幾段已翻好的譯文，加上還沒遇到標點那部分的暫時譯文。
-    /// 兩行放不下時字幕視窗會省略前面、保留最新的。這段還沒有任何譯文時保留上一行，畫面不會閃空。
-    private func refreshTranslationLine() {
+    /// 字幕視窗的譯文：最近幾句定案的譯文，接上正在說的這段。和原文一樣從底部往上滾，不省略。
+    private func refreshTranslationText() {
         guard translationQueue != nil else { return }
-        let pieces: [String]
-        var unfinished: String?
-        if liveVolatile.isEmpty {
-            pieces = SentenceSplitter.allSentences(segments.last?.text ?? "")
-        } else {
-            pieces = SentenceSplitter.split(liveVolatile, at: .clause).complete
-            // 辨識器改寫了前面的字時，原文對不上，暫時譯文先不顯示，等下一次重翻。
-            if let current = unfinishedTranslation, liveUnfinished.hasPrefix(current.source) {
-                unfinished = current.text
-            }
+        var blocks = segments.suffix(Self.subtitleHistory).map(displayedTranslation(of:))
+        blocks.append(currentTranslation())
+        liveTranslationText = blocks.filter { !$0.isEmpty }.joined(separator: liveTranslationTarget.sentenceJoiner)
+    }
+
+    /// 定案的句子：整句重翻好就用整句的譯文（比較準），還沒好就用定案當下字幕上的譯文。
+    private func displayedTranslation(of segment: TranscriptSegment) -> String {
+        if let whole = LiveTranslationExport.translation(of: segment, cache: translationCache, target: liveTranslationTarget),
+           !whole.isEmpty {
+            return whole
         }
-        var translated = Array(pieces.compactMap { translationCache[$0] }.filter { !$0.isEmpty }.suffix(4))
-        if let unfinished { translated.append(unfinished) }
-        guard !translated.isEmpty else { return }
-        liveTranslationLine = translated.joined(separator: liveTranslationTarget.sentenceJoiner)
+        return frozenTranslations[segment.id] ?? ""
+    }
+
+    /// 正在說的這段：遇到標點的段落已翻好的譯文，加上還沒遇到標點那部分的暫時譯文。
+    private func currentTranslation() -> String {
+        guard !liveVolatile.isEmpty else { return "" }
+        var parts = SentenceSplitter.split(liveVolatile, at: .clause).complete
+            .compactMap { translationCache[$0] }
+            .filter { !$0.isEmpty }
+        // 辨識器改寫了前面的字時，原文對不上，暫時譯文先不顯示，等下一次重翻。
+        if let unfinished = unfinishedTranslation, liveUnfinished.hasPrefix(unfinished.source) {
+            parts.append(unfinished.text)
+        }
+        return parts.joined(separator: liveTranslationTarget.sentenceJoiner)
     }
 
     private func resetLiveTranslation() {
@@ -644,7 +663,9 @@ final class AppModel {
         unfinishedInFlight = false
         unfinishedLastRequested = nil
         translationDownloadRequest = nil
-        liveTranslationLine = ""
+        liveTranslationText = ""
+        translationNotice = ""
+        frozenTranslations = [:]
         isTranslatingLive = false
     }
 

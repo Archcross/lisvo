@@ -43,49 +43,46 @@ final class SubtitleWindowController {
     }
 }
 
-/// 沒翻譯時兩行：上一行是前一句（淡），下一行是正在說的話或最新一句。
-/// 有翻譯時：原文一行（淡）、譯文兩行（ArchCross 黃），譯文是主角。
+/// 字幕從底部往上滾：文字完整排版，只露出最後幾行，舊的從上緣捲出去，不用「…」省略。
+/// 沒翻譯時：原文三行。有翻譯時：原文一行（淡）、譯文兩行（ArchCross 黃），譯文是主角。
 struct SubtitleView: View {
     @Environment(AppModel.self) private var model
 
     static let width: CGFloat = 820
-    static func height(translating: Bool) -> CGFloat { translating ? 150 : 120 }
+    static func height(translating: Bool) -> CGFloat { translating ? 150 : 140 }
 
     /// ArchCross 品牌黃，與 App 圖示同色。
     private static let translationColor = Color(red: 0xFE / 255, green: 0xC1 / 255, blue: 0x49 / 255)
 
     var body: some View {
-        let lines = model.subtitleLines
+        let source = model.subtitleSourceText
         let translating = model.isTranslatingLive
         ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: 6) {
                 if translating {
-                    Text(lines.current.isEmpty ? "等待聲音…" : lines.current)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.6))
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    Text(model.liveTranslationLine.isEmpty ? "（開始說話後出現譯文）" : model.liveTranslationLine)
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(model.liveTranslationLine.isEmpty ? .white.opacity(0.35) : Self.translationColor)
-                        .lineLimit(2)
-                        .truncationMode(.head)
+                    RollingText(
+                        text: source.isEmpty ? "等待聲音…" : source,
+                        size: 18, weight: .medium, lines: 1,
+                        color: .white.opacity(0.6)
+                    )
+                    let translation = model.translationNotice.isEmpty ? model.liveTranslationText : model.translationNotice
+                    RollingText(
+                        text: translation.isEmpty ? "（開始說話後出現譯文）" : translation,
+                        size: 26, weight: .semibold, lines: 2,
+                        color: model.liveTranslationText.isEmpty ? .white.opacity(0.35) : Self.translationColor
+                    )
                 } else {
-                    Text(lines.previous)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    Text(lines.current.isEmpty ? "等待聲音…" : lines.current)
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(lines.current.isEmpty ? .white.opacity(0.4) : .white)
-                        // 一句很長時保留最新的字，前面的用「…」省略。
-                        .lineLimit(2)
-                        .truncationMode(.head)
+                    RollingText(
+                        text: source.isEmpty ? "等待聲音…" : source,
+                        size: 26, weight: .semibold, lines: 3,
+                        color: source.isEmpty ? .white.opacity(0.4) : .white
+                    )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             .padding(.horizontal, 22)
+            // 右上角留給關閉鈕，文字不要壓到它。
+            .padding(.trailing, 14)
             .padding(.vertical, 14)
 
             Button(action: model.toggleLive) {
@@ -104,5 +101,36 @@ struct SubtitleView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.black.opacity(0.78))
         )
+    }
+}
+
+/// 固定幾行高的字幕區：文字照寬度完整換行，貼齊底部，超出的上半部被裁掉。
+/// 新字出現在最後一行，換行時整段往上推一行，最上面那行捲出去。
+struct RollingText: View {
+    let text: String
+    let size: CGFloat
+    let weight: NSFont.Weight
+    let lines: Int
+    let color: Color
+
+    var body: some View {
+        let font = NSFont.systemFont(ofSize: size, weight: weight)
+        // 用 AppKit 的行高算區塊高度，剛好露出整數行。
+        let lineHeight = ceil(NSLayoutManager().defaultLineHeight(for: font))
+        Text(text)
+            .font(Font(font))
+            .foregroundStyle(color)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: lineHeight * CGFloat(lines), alignment: .bottom)
+            .clipped()
+            // 上緣淡出幾點：行高和實際排版差一點點時，被切到的那行不會看起來像破圖。
+            .mask(
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 4)
+                    Rectangle()
+                }
+            )
     }
 }

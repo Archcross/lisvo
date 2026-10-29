@@ -35,6 +35,8 @@
 	<string>public.app-category.productivity</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>即時字幕選「麥克風」時，聽現場的聲音並在本機轉成字幕，不會上傳。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>快速模式使用 Mac 內建的語音辨識，在本機把錄音轉成文字，不會上傳。</string>
 	<key>CFBundleDocumentTypes</key>

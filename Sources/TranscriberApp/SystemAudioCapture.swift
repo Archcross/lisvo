@@ -20,7 +20,7 @@ enum SystemAudioCaptureError: LocalizedError {
 /// 用 ScreenCaptureKit：macOS 要求「螢幕與系統錄音」權限。畫面只要求最小尺寸、每秒 1 張，收到後直接丟掉。
 ///
 /// 執行緒：聲音在 `queue` 上依序送出，`onBuffer` 會在那條佇列被呼叫；`stream` 只在主執行緒的 start／stop 碰。
-final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+final class SystemAudioCapture: NSObject, LiveAudioCapture, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.archcross.lisvo.system-audio")
     private let onBuffer: @Sendable (AVAudioPCMBuffer) -> Void
     private let onStop: @Sendable (Error) -> Void

@@ -94,7 +94,7 @@ public final class LiveTranscriber: @unchecked Sendable {
     }
 
     /// 送進一段聲音。任何格式都可以，這裡會轉成辨識器要的格式。
-    /// 時間軸假設聲音連續不中斷（系統聲音擷取沒聲音時也會送靜音）。
+    /// 時間軸假設聲音連續不中斷（電腦聲音和麥克風擷取沒聲音時也會送靜音）。
     public func append(_ buffer: AVAudioPCMBuffer) {
         guard buffer.frameLength > 0, let converted = convert(buffer) else { return }
         input.yield(AnalyzerInput(buffer: converted))

@@ -36,9 +36,9 @@ struct ContentView: View {
         @Bindable var model = model
         return VStack(spacing: 8) {
             PathRow(
-                symbol: model.isLive ? "speaker.wave.2" : "waveform",
+                symbol: model.isLive ? model.liveAudioInUse.symbol : "waveform",
                 title: "音檔",
-                value: model.isLive ? "系統聲音（即時字幕）" : model.inputURL?.lastPathComponent,
+                value: model.isLive ? "\(model.liveAudioInUse.label)（即時字幕）" : model.inputURL?.lastPathComponent,
                 placeholder: "拖曳音檔或影片到視窗，或點這裡選擇",
                 highlighted: isDropTargeted,
                 action: model.chooseInput
@@ -107,7 +107,7 @@ struct ContentView: View {
         }
     }
 
-    /// 即時字幕自成一列：聽什麼語言、要不要翻譯，跟上面的檔案轉錄設定分開。
+    /// 即時字幕自成一列：聽哪裡的聲音、什麼語言、要不要翻譯，跟上面的檔案轉錄設定分開。
     private var liveRow: some View {
         @Bindable var model = model
         return HStack(spacing: 10) {
@@ -117,13 +117,19 @@ struct ContentView: View {
             Text("即時字幕")
                 .foregroundStyle(.secondary)
             Group {
+                Picker("來源", selection: $model.liveAudio) {
+                    ForEach(LiveAudioSource.allCases) { Label($0.label, systemImage: $0.symbol).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("電腦聲音：網頁、影片、線上會議。麥克風：現場演講、面對面談話。")
                 Text("聽").foregroundStyle(.secondary)
                 Picker("聽", selection: $model.liveSource) {
                     ForEach(AppModel.liveSourceOptions) { Text($0.displayName).tag($0) }
                 }
                 .labelsHidden()
                 .fixedSize()
-                .help("影片或會議裡說的語言。Mac 內建即時辨識不能自動偵測，要先選。")
+                .help("說話的語言。Mac 內建即時辨識不能自動偵測，要先選。")
                 Text("譯成").foregroundStyle(.secondary)
                 Picker("譯成", selection: $model.liveTranslation) {
                     ForEach(model.liveTranslationOptions) { Text($0.label).tag($0) }
@@ -141,7 +147,7 @@ struct ContentView: View {
             } else {
                 Button("開始字幕", action: model.toggleLive)
                     .disabled(model.isRunning)
-                    .help("把 Mac 正在播放的聲音（網頁、會議、任何 App）即時轉成字幕，顯示在浮動視窗。不分講者、不潤飾。")
+                    .help(model.liveAudio.help)
             }
         }
         .padding(.horizontal, 12)

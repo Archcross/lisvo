@@ -61,6 +61,10 @@ final class AppModel {
             if liveSource.isSameLanguage(as: liveTranslation) { liveTranslation = .off }
         }
     }
+    /// 即時字幕要聽電腦正在播放的聲音，還是麥克風。
+    var liveAudio: LiveAudioSource {
+        didSet { UserDefaults.standard.set(liveAudio.rawValue, forKey: Keys.liveAudio) }
+    }
     /// 即時字幕要翻成哪種語言。
     var liveTranslation: TranslationTarget {
         didSet { UserDefaults.standard.set(liveTranslation.rawValue, forKey: Keys.liveTranslation) }
@@ -103,12 +107,14 @@ final class AppModel {
 
     /// 即時字幕進行中（從按下開始到最後一句定案、存檔完成）。
     private(set) var isLive = false
-    /// 正在準備（確認語言包、取得系統聲音權限），這段時間按鈕不能再按。
+    /// 正在準備（確認語言包、取得錄音權限），這段時間按鈕不能再按。
     private(set) var isStartingLive = false
     /// 正在說、還會被修正的文字。
     private(set) var liveVolatile = ""
     private var liveTranscriber: LiveTranscriber?
-    private var liveCapture: SystemAudioCapture?
+    private var liveCapture: (any LiveAudioCapture)?
+    /// 這次字幕實際用的聲音來源；存檔時寫進逐字稿。
+    private(set) var liveAudioInUse: LiveAudioSource = .system
     private var liveEvents: AsyncStream<LiveEvent>.Continuation?
     private var liveConsumer: Task<Void, Never>?
     private var liveStartedAt: Date?
@@ -144,6 +150,7 @@ final class AppModel {
         static let polish = "polish"
         static let liveTranslation = "liveTranslation"
         static let liveSource = "liveSource"
+        static let liveAudio = "liveAudio"
     }
 
     init() {
@@ -163,6 +170,7 @@ final class AppModel {
         if source == .auto { source = .zhTW }
         let savedTranslation = defaults.string(forKey: Keys.liveTranslation).flatMap(TranslationTarget.init(rawValue:)) ?? .off
         liveSource = source
+        liveAudio = defaults.string(forKey: Keys.liveAudio).flatMap(LiveAudioSource.init(rawValue:)) ?? .system
         liveTranslation = source.isSameLanguage(as: savedTranslation) ? .off : savedTranslation
         inbox = Self.prepareInbox()
         if mode == .fast, language == .auto { language = .zhTW }
@@ -350,8 +358,8 @@ final class AppModel {
         }
     }
 
-    /// 擷取系統聲音、即時辨識，字幕顯示在浮動視窗，定案的句子同時列在主視窗。
-    /// 只用快速模式（Mac 內建辨識），不分講者、不潤飾；語言選「自動偵測」時改用中文（台灣）。
+    /// 擷取電腦聲音或麥克風、即時辨識，字幕顯示在浮動視窗，定案的句子同時列在主視窗。
+    /// 只用 Mac 內建辨識（Whisper 要一段一段處理，延遲太長），不分講者、不潤飾；語言用「聽」選的那一種。
     private func startLive() async {
         guard !isLive, !isStartingLive, !isRunning else { return }
         isStartingLive = true
@@ -371,6 +379,7 @@ final class AppModel {
         progress = nil
         stageText = "準備即時字幕"
         liveLanguage = liveSource
+        liveAudioInUse = liveAudio
 
         // 辨識結果依序排進串流，由主執行緒照順序更新畫面，避免先後顛倒。
         let (events, continuation) = AsyncStream.makeStream(of: LiveEvent.self, bufferingPolicy: .unbounded)
@@ -385,7 +394,7 @@ final class AppModel {
                 onStatus: { [weak self] text in Task { @MainActor in self?.stageText = text } },
                 onEvent: { continuation.yield($0) }
             )
-            let capture = SystemAudioCapture(
+            let capture = liveAudioInUse.makeCapture(
                 onBuffer: { transcriber.append($0) },
                 onStop: { [weak self] error in Task { @MainActor in self?.liveStoppedBySystem(error) } }
             )
@@ -444,7 +453,7 @@ final class AppModel {
         }
         let duration = Date().timeIntervalSince(liveStartedAt ?? Date())
         let transcript = Transcript(
-            sourceFileName: "系統聲音",
+            sourceFileName: liveAudioInUse.label,
             engine: .fast,
             language: liveLanguage,
             detectedLanguage: nil,
@@ -576,10 +585,10 @@ final class AppModel {
         isTranslatingLive = false
     }
 
-    /// 系統中途停止擷取（例如從選單列的錄製圖示關掉）：照常結束並存檔。
+    /// 中途停止擷取（例如從選單列的錄製圖示關掉、換了麥克風後接不回去）：照常結束並存檔。
     private func liveStoppedBySystem(_ error: Error) {
         guard isLive, liveCapture != nil else { return }
-        notices.append("系統停止了聲音擷取：\(error.localizedDescription)")
+        notices.append("聲音擷取中斷：\(error.localizedDescription)")
         Task { await stopLive() }
     }
 

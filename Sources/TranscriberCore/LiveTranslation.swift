@@ -52,6 +52,14 @@ extension TranscriptionLanguage {
         }
     }
 
+    /// 字詞之間用空格分開的語言（英文、韓文）用字數算長度，中日文用字元數。
+    public var separatesWordsWithSpaces: Bool {
+        switch self {
+        case .en, .ko: true
+        case .auto, .zhTW, .yue, .ja: false
+        }
+    }
+
     /// 來源和翻譯目標是同一種語言時不用翻。
     public func isSameLanguage(as target: TranslationTarget) -> Bool {
         guard let source = translationSource, let destination = target.language else { return false }
@@ -59,14 +67,25 @@ extension TranscriptionLanguage {
     }
 }
 
-/// 把字幕文字切成句子。只有遇到句尾標點的才算「講完的一句」，最後沒講完的半句另外回傳。
-/// 即時翻譯只翻講完的句子，半句不翻，譯文才不會一直跳動。
+/// 把字幕文字切成一段一段。遇到切點標點的才算「講完的一段」，最後沒講完的部分另外回傳。
+/// - `.sentence`：句尾標點（。！？；…），存檔的譯文用這個，前後文完整、翻得比較準。
+/// - `.clause`：再加上逗號、冒號，即時字幕用這個，譯文才跟得上說話速度。
+///   頓號（、）不算：它用在列舉（「蘋果、香蕉」），切開只會翻出單字。
 public enum SentenceSplitter {
+    public enum Boundary: Sendable {
+        case sentence
+        case clause
+    }
+
     private static let terminators: Set<Character> = ["。", "！", "？", "!", "?", "；", ";", "…"]
-    /// 緊跟在句尾標點後面、屬於同一句的收尾符號。
+    /// 一定是切點的全形逗號、冒號。
+    private static let clauseMarks: Set<Character> = ["，", "："]
+    /// 半形逗號、冒號：後面接空白或結尾才算，「1,000」「10:30」中間的不算。
+    private static let spacedClauseMarks: Set<Character> = [",", ":"]
+    /// 緊跟在切點標點後面、屬於同一段的收尾符號。
     private static let closers: Set<Character> = ["」", "』", "”", "’", "\"", "'", "）", ")"]
 
-    public static func split(_ text: String) -> (complete: [String], remainder: String) {
+    public static func split(_ text: String, at boundary: Boundary = .sentence) -> (complete: [String], remainder: String) {
         var sentences: [String] = []
         var current = ""
         let characters = Array(text)
@@ -74,7 +93,7 @@ public enum SentenceSplitter {
         while index < characters.count {
             let character = characters[index]
             current.append(character)
-            if isSentenceEnd(at: index, in: characters) {
+            if isSentenceEnd(at: index, in: characters) || (boundary == .clause && isClauseEnd(at: index, in: characters)) {
                 // 把緊接著的收尾符號一起帶走。
                 while index + 1 < characters.count, closers.contains(characters[index + 1]) {
                     index += 1
@@ -105,11 +124,37 @@ public enum SentenceSplitter {
         return nextIsBoundary && previousIsLetter && !previousIsAbbreviation
     }
 
+    private static func isClauseEnd(at index: Int, in characters: [Character]) -> Bool {
+        let character = characters[index]
+        if clauseMarks.contains(character) { return true }
+        guard spacedClauseMarks.contains(character) else { return false }
+        return index + 1 >= characters.count || characters[index + 1].isWhitespace
+    }
+
     private static func append(_ sentence: String, to sentences: inout [String]) {
         let trimmed = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
         // 只有標點、沒有內容的不算一句。
         guard trimmed.contains(where: { $0.isLetter || $0.isNumber }) else { return }
         sentences.append(trimmed)
+    }
+}
+
+/// 即時翻譯什麼時候翻「還沒遇到標點」的部分。
+/// Apple 即時辨識常常一長串都不加標點（實測「請工程團隊先做效能優化預算的部分我再跟財務確認」整段沒有逗號），
+/// 只等標點的話，譯文會落後十幾秒。夠長時先暫時翻一次，之後遇到標點再換成那一段的正式譯文。
+public enum UnfinishedTranslationPolicy {
+    /// 中日文至少幾個字。約 2～3 秒的話，太短翻不出意思。
+    public static let minimumCharacters = 12
+    /// 英韓文至少幾個字（以空格分開的字）。
+    public static let minimumWords = 8
+    /// 同一段還沒講完的話，最快多久重翻一次。每次重翻譯文都會變，太頻繁會讓字幕一直跳。
+    public static let minimumInterval: TimeInterval = 1
+
+    public static func isLongEnough(_ text: String, language: TranscriptionLanguage) -> Bool {
+        if language.separatesWordsWithSpaces {
+            return text.split(whereSeparator: \.isWhitespace).count >= minimumWords
+        }
+        return text.filter { $0.isLetter || $0.isNumber }.count >= minimumCharacters
     }
 }
 

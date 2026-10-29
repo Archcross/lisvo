@@ -65,7 +65,7 @@ struct SubtitleView: View {
                         .foregroundStyle(.white.opacity(0.6))
                         .lineLimit(1)
                         .truncationMode(.head)
-                    Text(model.liveTranslationLine.isEmpty ? "（講完一句後出現譯文）" : model.liveTranslationLine)
+                    Text(model.liveTranslationLine.isEmpty ? "（開始說話後出現譯文）" : model.liveTranslationLine)
                         .font(.system(size: 26, weight: .semibold))
                         .foregroundStyle(model.liveTranslationLine.isEmpty ? .white.opacity(0.35) : Self.translationColor)
                         .lineLimit(2)

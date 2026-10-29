@@ -338,6 +338,27 @@ import Testing
         #expect(missing.hasPrefix("[00:00:03] （未翻譯）"))
     }
 
+    @Test func clauseModeBreaksAtCommasAndColons() {
+        let result = SentenceSplitter.split("大家好，今天的會議主要是：預算、時程。還有", at: .clause)
+        #expect(result.complete == ["大家好，", "今天的會議主要是：", "預算、時程。"])
+        #expect(result.remainder == "還有")
+        // 預設的整句模式不受影響。
+        #expect(SentenceSplitter.split("大家好，今天開會。").complete == ["大家好，今天開會。"])
+    }
+
+    @Test func clauseModeKeepsNumbersAndTimesTogether() {
+        let result = SentenceSplitter.split("Well, we spent 1,000 dollars at 10:30, and then", at: .clause)
+        #expect(result.complete == ["Well,", "we spent 1,000 dollars at 10:30,"])
+        #expect(result.remainder == "and then")
+    }
+
+    @Test func unfinishedTextNeedsEnoughLength() {
+        #expect(!UnfinishedTranslationPolicy.isLongEnough("請工程團隊先做效能", language: .zhTW))
+        #expect(UnfinishedTranslationPolicy.isLongEnough("請工程團隊先做效能優化預算的部分", language: .zhTW))
+        #expect(!UnfinishedTranslationPolicy.isLongEnough("we need the engineering team", language: .en))
+        #expect(UnfinishedTranslationPolicy.isLongEnough("we need the engineering team to fix it before", language: .en))
+    }
+
     @Test func sameLanguageIsSkipped() {
         #expect(TranscriptionLanguage.zhTW.isSameLanguage(as: .zhHant))
         #expect(TranscriptionLanguage.yue.isSameLanguage(as: .zhHant))

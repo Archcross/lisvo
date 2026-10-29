@@ -15,8 +15,8 @@ struct ContentView: View {
             transcript
             statusBar
         }
-        // 上方一列要放得下：模式、語言、講者、潤飾、開始轉錄（約 600 點），再窄會擠壓換行。
-        .frame(minWidth: 660, minHeight: 560)
+        // 轉錄那一列要放得下：標題、模式、語言、講者、潤飾、開始轉錄（約 680 點），再窄會擠壓換行。
+        .frame(minWidth: 720, minHeight: 560)
         .background(Color(nsColor: .windowBackgroundColor))
         .dropDestination(for: URL.self) { urls, _ in
             guard let url = urls.first(where: SupportedMedia.isSupported) else { return false }
@@ -32,9 +32,10 @@ struct ContentView: View {
 
     // MARK: - 上方：輸入、輸出、選項
 
+    /// 上方四列用同一種外觀（見 ControlRow）：音檔、輸出、檔案轉錄、即時字幕。
     private var controls: some View {
         @Bindable var model = model
-        return VStack(spacing: 8) {
+        return VStack(spacing: RowMetrics.gap) {
             PathRow(
                 symbol: model.isLive ? model.liveAudioInUse.symbol : "waveform",
                 title: "音檔",
@@ -61,15 +62,22 @@ struct ContentView: View {
                 )
             )
             .disabled(model.isRunning)
+            transcribeRow
+            liveRow
+        }
+    }
 
-            HStack(spacing: 12) {
-                Group {
+    /// 檔案轉錄的設定。選單內容本身看得出意思（「中文（台灣）」「自動判斷人數」），不另加欄位名稱。
+    private var transcribeRow: some View {
+        @Bindable var model = model
+        return ControlRow(symbol: "doc.text", title: "轉錄") {
+            Group {
                 Picker("模式", selection: $model.mode) {
                     ForEach(EngineKind.allCases) { Text($0.displayName).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 120)
+                .fixedSize()
                 .help("快速：Mac 內建辨識。精準：Whisper 模型。")
 
                 Picker("語言", selection: $model.language) {
@@ -77,6 +85,7 @@ struct ContentView: View {
                 }
                 .labelsHidden()
                 .fixedSize()
+                .help("音檔裡說話的語言。精準模式可以自動偵測。")
 
                 Picker("講者", selection: $model.speakerChoice) {
                     ForEach(SpeakerChoice.options, id: \.self) { Text(SpeakerChoice.label($0)).tag($0) }
@@ -86,36 +95,27 @@ struct ContentView: View {
 
                 Toggle("AI 潤飾", isOn: $model.polish)
                     .toggleStyle(.checkbox)
+                    .fixedSize()
                     .help("用 Mac 內建 AI 修錯字、補標點、刪口頭禪。另存一份，原文不變。")
-                }
-                .disabled(model.isRunning || model.isLive)
-
-                Spacer(minLength: 0)
-
-                if model.isRunning {
-                    Button("停止", role: .cancel, action: model.stop)
-                        .keyboardShortcut(.cancelAction)
-                } else {
-                    Button("開始轉錄", action: model.start)
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!model.canStart)
-                }
             }
-
-            liveRow
+            .disabled(model.isRunning || model.isLive)
+        } trailing: {
+            if model.isRunning {
+                RowActionButton(title: "停止", isStop: true, action: model.stop)
+                    .keyboardShortcut(.cancelAction)
+            } else {
+                RowActionButton(title: "開始轉錄", isStop: false, action: model.start)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!model.canStart)
+            }
         }
     }
 
     /// 即時字幕自成一列：聽哪裡的聲音、什麼語言、要不要翻譯，跟上面的檔案轉錄設定分開。
+    /// 兩個語言選單看不出哪個是哪個，前面加「聽」「譯成」。
     private var liveRow: some View {
         @Bindable var model = model
-        return HStack(spacing: 10) {
-            Image(systemName: "captions.bubble")
-                .frame(width: 18)
-                .foregroundStyle(.secondary)
-            Text("即時字幕")
-                .foregroundStyle(.secondary)
+        return ControlRow(symbol: "captions.bubble", title: "字幕") {
             Group {
                 Picker("來源", selection: $model.liveAudio) {
                     ForEach(LiveAudioSource.allCases) { Label($0.label, systemImage: $0.symbol).tag($0) }
@@ -123,14 +123,14 @@ struct ContentView: View {
                 .labelsHidden()
                 .fixedSize()
                 .help("電腦聲音：網頁、影片、線上會議。麥克風：現場演講、面對面談話。")
-                Text("聽").foregroundStyle(.secondary)
+                FieldLabel("聽")
                 Picker("聽", selection: $model.liveSource) {
                     ForEach(AppModel.liveSourceOptions) { Text($0.displayName).tag($0) }
                 }
                 .labelsHidden()
                 .fixedSize()
                 .help("說話的語言。Mac 內建即時辨識不能自動偵測，要先選。")
-                Text("譯成").foregroundStyle(.secondary)
+                FieldLabel("譯成")
                 Picker("譯成", selection: $model.liveTranslation) {
                     ForEach(model.liveTranslationOptions) { Text($0.label).tag($0) }
                 }
@@ -139,23 +139,17 @@ struct ContentView: View {
                 .help("用 Mac 內建翻譯在本機翻譯；第一次用某組語言時會請你下載語言包。中英互譯（聽中文時才有）：同時聽中文和英文，中文翻成英文、英文翻成中文。")
             }
             .disabled(model.isLive || model.isRunning)
-            Spacer(minLength: 0)
+        } trailing: {
             if model.isLive {
-                Button("停止字幕", role: .cancel, action: model.toggleLive)
+                RowActionButton(title: "停止字幕", isStop: true, action: model.toggleLive)
                     .keyboardShortcut(.cancelAction)
                     .disabled(model.isStartingLive)
             } else {
-                Button("開始字幕", action: model.toggleLive)
+                RowActionButton(title: "開始字幕", isStop: false, action: model.toggleLive)
                     .disabled(model.isRunning)
                     .help(model.liveAudio.help)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.primary.opacity(0.05))
-        )
     }
 
     // MARK: - 中間：逐字稿
@@ -226,7 +220,83 @@ struct ContentView: View {
     }
 }
 
-/// 一行「圖示 標題 內容」，整行可以點。沒有外框，只用淡底色區分。
+/// 上方各列共用的尺寸。
+enum RowMetrics {
+    /// 列與列之間的距離。
+    static let gap: CGFloat = 8
+    static let height: CGFloat = 40
+}
+
+/// 主視窗上方每一列的共同外觀：淡底色圓角色塊（不加框線）、固定列高，
+/// 左邊是固定寬度的圖示和兩個字的標題，中間放內容，右邊放這一列的按鈕。四列的標題和按鈕因此上下對齊。
+struct ControlRow<Content: View, Trailing: View>: View {
+    let symbol: String
+    let title: String
+    var highlighted = false
+    @ViewBuilder let content: Content
+    @ViewBuilder let trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .frame(width: 18)
+                .foregroundStyle(.secondary)
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 32, alignment: .leading)
+            HStack(spacing: 10) { content }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            trailing
+        }
+        .padding(.horizontal, 12)
+        .frame(height: RowMetrics.height)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(highlighted ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05))
+        )
+    }
+}
+
+extension ControlRow where Trailing == EmptyView {
+    init(symbol: String, title: String, highlighted: Bool = false, @ViewBuilder content: () -> Content) {
+        self.init(symbol: symbol, title: title, highlighted: highlighted, content: content, trailing: { EmptyView() })
+    }
+}
+
+/// 列內選單前面的欄位名稱（例如「聽」「譯成」）。
+struct FieldLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text).foregroundStyle(.secondary)
+    }
+}
+
+/// 每一列右邊的開始／停止按鈕：同樣寬度、同樣樣式。開始用強調色，停止用一般按鈕。
+struct RowActionButton: View {
+    static var width: CGFloat { 72 }
+
+    let title: String
+    let isStop: Bool
+    let action: () -> Void
+
+    var body: some View {
+        if isStop {
+            Button(role: .cancel, action: action) { label }
+                .buttonStyle(.bordered)
+        } else {
+            Button(action: action) { label }
+                .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private var label: some View {
+        Text(title).frame(minWidth: Self.width)
+    }
+}
+
+/// 一行「圖示 標題 內容」，整行可以點（選音檔、選輸出資料夾）。外觀同 ControlRow。
 struct PathRow: View {
     let symbol: String
     let title: String
@@ -237,26 +307,14 @@ struct PathRow: View {
     var trailing: AnyView?
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .frame(width: 18)
-                .foregroundStyle(.secondary)
-            Text(title)
-                .foregroundStyle(.secondary)
-                .frame(width: 32, alignment: .leading)
+        ControlRow(symbol: symbol, title: title, highlighted: highlighted) {
             Text(value ?? placeholder)
                 .foregroundStyle(value == nil ? .tertiary : .primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        } trailing: {
             if let trailing { trailing }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(highlighted ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05))
-        )
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
     }

@@ -1,5 +1,9 @@
 #!/bin/zsh
-# 編譯並組成 build/Lisvo.app，用本機臨時簽署（ad-hoc），只能在這台 Mac 上執行。
+# 編譯並組成 build/Lisvo.app，只能在這台 Mac 上執行。
+#
+# 簽署：鑰匙圈裡有名為「Lisvo Local Signing」的自簽程式碼簽署憑證時用它簽，否則用臨時簽署（ad-hoc）。
+# 臨時簽署每次重新建置，macOS 都會當成新的 App，「螢幕與系統錄音」等權限要重新允許；
+# 用固定憑證簽署，權限會跟著憑證走，重新建置不用再允許。也可以用 LISVO_SIGN_IDENTITY 指定其他憑證名稱。
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
@@ -35,6 +39,15 @@ if [[ -d "$APP/Contents/Frameworks" ]]; then
   install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Transcriber" 2>/dev/null || true
 fi
 
-codesign --force --deep --sign - "$APP"
+IDENTITY="${LISVO_SIGN_IDENTITY:-}"
+if [[ -z "$IDENTITY" ]]; then
+  # 先存成變數再比對：pipefail 下接 grep -q 可能讓 security 收到 SIGPIPE，整條判斷變成失敗。
+  KNOWN_IDENTITIES="$(security find-identity -p codesigning 2>/dev/null || true)"
+  if [[ "$KNOWN_IDENTITIES" == *'"Lisvo Local Signing"'* ]]; then
+    IDENTITY="Lisvo Local Signing"
+  fi
+fi
+codesign --force --deep --sign "${IDENTITY:--}" "$APP"
+echo "簽署：${IDENTITY:-臨時簽署（ad-hoc）}"
 codesign --verify --deep --strict "$APP"
 echo "$APP"

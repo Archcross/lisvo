@@ -76,7 +76,7 @@ iOS 版本不同，選項名稱可能略有差異。
 ## 開發
 
 ```bash
-# 組成 build/Lisvo.app（本機臨時簽署）
+# 組成 build/Lisvo.app
 scripts/build-app.sh
 
 # 改了 Resources/Icon/AppIcon.svg 之後，重新產生 App 圖示（需要 brew install librsvg）
@@ -94,6 +94,10 @@ swift run transcriber-cli 音檔.m4a --live --speed 1
 - Whisper：`~/Library/Application Support/Lisvo/Models/Whisper`
 - 分講者：`~/Library/Application Support/Lisvo/Models/Diarization`
 - 快速模式與即時翻譯的語言包由系統管理
+
+簽署：鑰匙圈裡有名為「Lisvo Local Signing」的自簽程式碼簽署憑證時用它簽，否則用臨時簽署（ad-hoc）。
+臨時簽署每次重新建置，macOS 都當成新的 App，「螢幕與系統錄音」權限要重新允許；用固定憑證就不用。
+也可以用環境變數 `LISVO_SIGN_IDENTITY` 指定其他憑證名稱。
 
 ## 程式結構
 

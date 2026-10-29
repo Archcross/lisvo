@@ -29,9 +29,9 @@ struct ContentView: View {
         @Bindable var model = model
         return VStack(spacing: 8) {
             PathRow(
-                symbol: "waveform",
+                symbol: model.isLive ? "speaker.wave.2" : "waveform",
                 title: "音檔",
-                value: model.inputURL?.lastPathComponent,
+                value: model.isLive ? "系統聲音（即時字幕）" : model.inputURL?.lastPathComponent,
                 placeholder: "拖曳音檔或影片到視窗，或點這裡選擇",
                 highlighted: isDropTargeted,
                 action: model.chooseInput
@@ -81,14 +81,20 @@ struct ContentView: View {
                     .toggleStyle(.checkbox)
                     .help("用 Mac 內建 AI 修錯字、補標點、刪口頭禪。另存一份，原文不變。")
                 }
-                .disabled(model.isRunning)
+                .disabled(model.isRunning || model.isLive)
 
                 Spacer(minLength: 0)
 
                 if model.isRunning {
                     Button("停止", role: .cancel, action: model.stop)
                         .keyboardShortcut(.cancelAction)
+                } else if model.isLive {
+                    Button("停止字幕", role: .cancel, action: model.toggleLive)
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(model.isStartingLive)
                 } else {
+                    Button("即時字幕", action: model.toggleLive)
+                        .help("把 Mac 正在播放的聲音（網頁、會議、任何 App）即時轉成字幕，顯示在浮動視窗。只用快速模式，不分講者、不潤飾。")
                     Button("開始轉錄", action: model.start)
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
@@ -104,8 +110,9 @@ struct ContentView: View {
         TranscriptList(
             segments: model.segments,
             isFinal: model.isFinalized,
-            isRunning: model.isRunning,
-            hasInput: model.inputURL != nil,
+            // 即時字幕時也算「進行中」：顯示等待提示、新句子出現時自動捲到底。
+            isRunning: model.isRunning || model.isLive,
+            hasInput: model.inputURL != nil || model.isLive,
             activeID: model.activeSegmentID,
             onSelect: model.play
         )

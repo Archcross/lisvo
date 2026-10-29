@@ -33,25 +33,11 @@ public struct AppleSpeechEngine: SpeechEngine {
         speakerTurns: [SpeakerTurn]?,
         onEvent: @escaping @Sendable (EngineEvent) -> Void
     ) async throws -> EngineResult {
-        guard let identifier = language.appleLocaleIdentifier else { throw AppleSpeechEngineError.languageRequired }
-        try await Self.ensureAuthorized()
-
-        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: identifier)) else {
-            throw AppleSpeechEngineError.unsupportedLanguage(identifier)
-        }
-
-        let transcriber = SpeechTranscriber(
-            locale: locale,
-            transcriptionOptions: [],
+        let (transcriber, locale) = try await Self.makeTranscriber(
+            language: language,
             reportingOptions: [],
-            attributeOptions: [.audioTimeRange]
+            onStatus: { onEvent(.status($0)) }
         )
-
-        onEvent(.status("確認語言模型"))
-        if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-            onEvent(.status("下載 Apple 語言模型"))
-            try await request.downloadAndInstall()
-        }
 
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         let file = try AVAudioFile(forReading: audio)
@@ -91,9 +77,37 @@ public struct AppleSpeechEngine: SpeechEngine {
         return EngineResult(segments: segments, detectedLanguage: locale.identifier(.bcp47))
     }
 
+    /// 建立辨識器：確認授權、找出系統支援的語言、必要時下載語言包。檔案轉錄與即時字幕共用。
+    static func makeTranscriber(
+        language: TranscriptionLanguage,
+        reportingOptions: Set<SpeechTranscriber.ReportingOption>,
+        onStatus: (String) -> Void
+    ) async throws -> (SpeechTranscriber, Locale) {
+        guard let identifier = language.appleLocaleIdentifier else { throw AppleSpeechEngineError.languageRequired }
+        try await ensureAuthorized()
+
+        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: identifier)) else {
+            throw AppleSpeechEngineError.unsupportedLanguage(identifier)
+        }
+
+        let transcriber = SpeechTranscriber(
+            locale: locale,
+            transcriptionOptions: [],
+            reportingOptions: reportingOptions,
+            attributeOptions: [.audioTimeRange]
+        )
+
+        onStatus("確認語言模型")
+        if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+            onStatus("下載 Apple 語言模型")
+            try await request.downloadAndInstall()
+        }
+        return (transcriber, locale)
+    }
+
     /// 把一個辨識結果拆成帶時間的片語。AttributedString 的每個 run 帶自己的時間範圍，
     /// 之後分講者時可以在片語邊界切開不同人的話。
-    private static func makeSegment(from result: SpeechTranscriber.Result) -> TranscriptSegment? {
+    static func makeSegment(from result: SpeechTranscriber.Result) -> TranscriptSegment? {
         let text = result.text
         var words: [TimedWord] = []
         for run in text.runs {

@@ -188,7 +188,7 @@ public enum TranscriptionPipeline {
     }
 
     /// 每次轉錄放進自己的資料夾：「檔名 2026-10-28 2130」，同名時加序號。
-    static func uniqueFolder(in directory: URL, baseName: String) -> URL {
+    public static func uniqueFolder(in directory: URL, baseName: String) -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HHmm"

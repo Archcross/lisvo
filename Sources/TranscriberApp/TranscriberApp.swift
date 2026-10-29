@@ -23,6 +23,10 @@ struct TranscriberApp: App {
                     .disabled(model.isRunning)
                 Button("打開 iCloud 收件資料夾") { model.revealInbox() }
                     .disabled(model.inbox == nil)
+                Divider()
+                Button(model.isLive ? "停止即時字幕" : "開始即時字幕") { model.toggleLive() }
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                    .disabled(model.isRunning || model.isStartingLive)
             }
         }
     }

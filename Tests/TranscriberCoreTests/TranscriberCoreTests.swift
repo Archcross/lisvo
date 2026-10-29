@@ -291,3 +291,12 @@ import Testing
         #expect(!SupportedMedia.isSupported(URL(fileURLWithPath: "/a/b.txt")))
     }
 }
+
+@Suite struct LiveTranscriberTests {
+    @Test func dropsPunctuationCarriedOverFromPreviousSentence() {
+        #expect(LiveTranscriber.dropLeadingPunctuation("。嗯，那你覺得") == "嗯，那你覺得")
+        #expect(LiveTranscriber.dropLeadingPunctuation("， 好的。") == "好的。")
+        #expect(LiveTranscriber.dropLeadingPunctuation("。") == "")
+        #expect(LiveTranscriber.dropLeadingPunctuation("大家好。") == "大家好。")
+    }
+}

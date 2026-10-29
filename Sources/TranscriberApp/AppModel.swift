@@ -80,13 +80,27 @@ final class AppModel {
     private var skippedInboxFiles: Set<URL> = []
     private var inboxTask: Task<Void, Never>?
 
+    /// 即時字幕進行中（從按下開始到最後一句定案、存檔完成）。
+    private(set) var isLive = false
+    /// 正在準備（確認語言包、取得系統聲音權限），這段時間按鈕不能再按。
+    private(set) var isStartingLive = false
+    /// 正在說、還會被修正的文字。
+    private(set) var liveVolatile = ""
+    private var liveTranscriber: LiveTranscriber?
+    private var liveCapture: SystemAudioCapture?
+    private var liveEvents: AsyncStream<LiveEvent>.Continuation?
+    private var liveConsumer: Task<Void, Never>?
+    private var liveStartedAt: Date?
+    private var liveLanguage: TranscriptionLanguage = .zhTW
+    private let subtitleWindow = SubtitleWindowController()
+
     var isRunning: Bool { phase == .running }
 
     var languageOptions: [TranscriptionLanguage] {
         mode == .accurate ? TranscriptionLanguage.allCases : TranscriptionLanguage.allCases.filter { $0 != .auto }
     }
 
-    var canStart: Bool { inputURL != nil && !isRunning }
+    var canStart: Bool { inputURL != nil && !isRunning && !isLive }
 
     private enum Keys {
         static let output = "outputDirectory"
@@ -121,7 +135,7 @@ final class AppModel {
     }
 
     private func setInput(_ url: URL, fromInbox: Bool) {
-        guard !isRunning else { return }
+        guard !isRunning, !isLive else { return }
         inputURL = url
         inputFromInbox = fromInbox
         playback.load(url)
@@ -280,6 +294,143 @@ final class AppModel {
         finishInboxFile(newPhase)
     }
 
+    // MARK: - 即時字幕
+
+    /// 浮動字幕的兩行：有暫定文字時顯示「上一句定案＋正在說的」，沒有時顯示最後兩句定案。
+    var subtitleLines: (previous: String, current: String) {
+        if !liveVolatile.isEmpty { return (segments.last?.text ?? "", liveVolatile) }
+        if segments.count >= 2 { return (segments[segments.count - 2].text, segments[segments.count - 1].text) }
+        return ("", segments.last?.text ?? "")
+    }
+
+    func toggleLive() {
+        Task {
+            if isLive { await stopLive() } else { await startLive() }
+        }
+    }
+
+    /// 擷取系統聲音、即時辨識，字幕顯示在浮動視窗，定案的句子同時列在主視窗。
+    /// 只用快速模式（Mac 內建辨識），不分講者、不潤飾；語言選「自動偵測」時改用中文（台灣）。
+    private func startLive() async {
+        guard !isLive, !isStartingLive, !isRunning else { return }
+        isStartingLive = true
+        isLive = true
+        defer { isStartingLive = false }
+
+        playback.unload()
+        inputURL = nil
+        inputFromInbox = false
+        playingSegmentID = nil
+        phase = .idle
+        segments = []
+        isFinalized = false
+        notices = []
+        liveVolatile = ""
+        sideStageText = ""
+        progress = nil
+        stageText = "準備即時字幕"
+        liveLanguage = language == .auto ? .zhTW : language
+
+        // 辨識結果依序排進串流，由主執行緒照順序更新畫面，避免先後顛倒。
+        let (events, continuation) = AsyncStream.makeStream(of: LiveEvent.self, bufferingPolicy: .unbounded)
+        liveEvents = continuation
+        liveConsumer = Task { @MainActor [weak self] in
+            for await event in events { self?.handleLive(event) }
+        }
+
+        do {
+            let transcriber = try await LiveTranscriber.start(
+                language: liveLanguage,
+                onStatus: { [weak self] text in Task { @MainActor in self?.stageText = text } },
+                onEvent: { continuation.yield($0) }
+            )
+            let capture = SystemAudioCapture(
+                onBuffer: { transcriber.append($0) },
+                onStop: { [weak self] error in Task { @MainActor in self?.liveStoppedBySystem(error) } }
+            )
+            do {
+                try await capture.start()
+            } catch {
+                _ = await transcriber.finish()
+                throw error
+            }
+            liveTranscriber = transcriber
+            liveCapture = capture
+            liveStartedAt = Date()
+            stageText = "即時字幕中"
+            subtitleWindow.show(model: self)
+        } catch {
+            continuation.finish()
+            await liveConsumer?.value
+            liveEvents = nil
+            liveConsumer = nil
+            isLive = false
+            stageText = ""
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// 停止擷取，等最後一句定案，存成和檔案轉錄相同格式的逐字稿（存到本機的輸出資料夾）。
+    private func stopLive() async {
+        guard isLive, !isStartingLive, let transcriber = liveTranscriber else { return }
+        stageText = "結束即時字幕"
+        let capture = liveCapture
+        liveCapture = nil
+        liveTranscriber = nil
+        await capture?.stop()
+        let finalSegments = await transcriber.finish()
+        liveEvents?.finish()
+        await liveConsumer?.value
+        liveEvents = nil
+        liveConsumer = nil
+        subtitleWindow.hide()
+        liveVolatile = ""
+        segments = finalSegments
+        isFinalized = true
+        isLive = false
+
+        guard !finalSegments.isEmpty else {
+            stageText = "已停止（沒有辨識到文字）"
+            return
+        }
+        let duration = Date().timeIntervalSince(liveStartedAt ?? Date())
+        let transcript = Transcript(
+            sourceFileName: "系統聲音",
+            engine: .fast,
+            language: liveLanguage,
+            detectedLanguage: nil,
+            audioDuration: duration,
+            processingSeconds: duration,
+            speakerDetection: false,
+            segments: finalSegments
+        )
+        let folder = TranscriptionPipeline.uniqueFolder(in: outputDirectory, baseName: "即時字幕")
+        do {
+            _ = try Exporter.write(transcript, baseName: "即時字幕", to: folder)
+            phase = .finished(folder)
+            stageText = "已存檔"
+        } catch {
+            phase = .failed("即時字幕存檔失敗：\(error.localizedDescription)")
+        }
+    }
+
+    private func handleLive(_ event: LiveEvent) {
+        guard isLive else { return }
+        switch event {
+        case .volatile(let text):
+            liveVolatile = text
+        case .finalized(let segment):
+            segments.append(segment)
+        }
+    }
+
+    /// 系統中途停止擷取（例如從選單列的錄製圖示關掉）：照常結束並存檔。
+    private func liveStoppedBySystem(_ error: Error) {
+        guard isLive, liveCapture != nil else { return }
+        notices.append("系統停止了聲音擷取：\(error.localizedDescription)")
+        Task { await stopLive() }
+    }
+
     // MARK: - iPhone 收件（iCloud）
 
     func revealInbox() {
@@ -318,7 +469,7 @@ final class AppModel {
     /// 手機來的音檔收到就自動轉，用目前的模式、語言、講者與潤飾設定。
     /// 正在轉錄或正在聽某一句時不打斷，等下一輪再看。
     private func startNextInboxFileIfIdle() {
-        guard !isRunning, !playback.isPlaying, let next = inboxQueue.first else { return }
+        guard !isRunning, !isLive, !playback.isPlaying, let next = inboxQueue.first else { return }
         inboxQueue.removeFirst()
         setInput(next, fromInbox: true)
         currentInboxFile = next

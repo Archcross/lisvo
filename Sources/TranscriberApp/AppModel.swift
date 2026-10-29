@@ -30,7 +30,6 @@ final class AppModel {
         case cancelled
     }
 
-    static let supportedTypes: [UTType] = [.audio, .movie]
 
     var inputURL: URL?
     var outputDirectory: URL {
@@ -68,6 +67,19 @@ final class AppModel {
 
     private var job: Task<Void, Never>?
 
+    /// iPhone 分享過來的音檔所在的 iCloud 資料夾；沒開 iCloud 雲碟時是 nil，這個功能整個不啟用。
+    let inbox: InboxFolders?
+    private var inboxScanner = InboxScanner()
+    /// 已經同步完整、排隊等著轉的手機音檔。
+    private(set) var inboxQueue: [URL] = []
+    /// 正在轉的手機音檔。
+    private(set) var currentInboxFile: URL?
+    /// 目前顯示的音檔是不是從手機來的；是的話逐字稿存到 iCloud，輸出列也顯示 iCloud 的位置。
+    private(set) var inputFromInbox = false
+    /// 這次開著 App 期間轉失敗或被停止的手機音檔。留在收件資料夾，下次開 App 再試，這次不自動重試，避免一直失敗一直重來。
+    private var skippedInboxFiles: Set<URL> = []
+    private var inboxTask: Task<Void, Never>?
+
     var isRunning: Bool { phase == .running }
 
     var languageOptions: [TranscriptionLanguage] {
@@ -97,14 +109,21 @@ final class AppModel {
         language = defaults.string(forKey: Keys.language).flatMap(TranscriptionLanguage.init(rawValue:)) ?? .zhTW
         speakerChoice = defaults.object(forKey: Keys.speakers) as? Int ?? SpeakerChoice.auto
         polish = defaults.bool(forKey: Keys.polish)
+        inbox = Self.prepareInbox()
         if mode == .fast, language == .auto { language = .zhTW }
+        startWatchingInbox()
     }
 
     // MARK: - 選檔
 
     func setInput(_ url: URL) {
+        setInput(url, fromInbox: false)
+    }
+
+    private func setInput(_ url: URL, fromInbox: Bool) {
         guard !isRunning else { return }
         inputURL = url
+        inputFromInbox = fromInbox
         playback.load(url)
         playingSegmentID = nil
         phase = .idle
@@ -118,7 +137,7 @@ final class AppModel {
 
     func chooseInput() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = Self.supportedTypes
+        panel.allowedContentTypes = SupportedMedia.types
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.message = "選擇要轉錄的音檔或影片"
@@ -136,7 +155,23 @@ final class AppModel {
         if panel.runModal() == .OK, let url = panel.url { outputDirectory = url }
     }
 
+    /// 這次轉錄的逐字稿會存到哪裡：手機來的放 iCloud，其他照使用者設定。
+    var activeOutputDirectory: URL {
+        if inputFromInbox, let inbox { return inbox.transcripts }
+        return outputDirectory
+    }
+
+    /// 輸出列顯示用的路徑。iCloud 的實際路徑很長，改成 Finder 裡看到的名稱。
+    var activeOutputDisplayPath: String {
+        if inputFromInbox, inbox != nil { return "iCloud 雲碟/Lisvo/逐字稿" }
+        return (outputDirectory.path as NSString).abbreviatingWithTildeInPath
+    }
+
     func revealOutputDirectory() {
+        if inputFromInbox, let inbox {
+            NSWorkspace.shared.open(inbox.transcripts)
+            return
+        }
         try? FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         NSWorkspace.shared.open(outputDirectory)
     }
@@ -191,7 +226,7 @@ final class AppModel {
             speakerDetection: speakerChoice != SpeakerChoice.off,
             speakerCount: speakerChoice > 0 ? speakerChoice : nil,
             polish: polish,
-            outputDirectory: outputDirectory
+            outputDirectory: activeOutputDirectory
         )
 
         phase = .running
@@ -242,6 +277,70 @@ final class AppModel {
         default: break
         }
         job = nil
+        finishInboxFile(newPhase)
+    }
+
+    // MARK: - iPhone 收件（iCloud）
+
+    func revealInbox() {
+        guard let inbox else { return }
+        NSWorkspace.shared.open(inbox.root)
+    }
+
+    private static func prepareInbox() -> InboxFolders? {
+        guard let folders = InboxFolders.iCloud else { return nil }
+        do {
+            try folders.createIfNeeded()
+            return folders
+        } catch {
+            return nil
+        }
+    }
+
+    /// 每 3 秒看一次收件資料夾。檔案要連續兩次大小一樣才算同步完，所以新檔案大約 3 到 6 秒後開始轉。
+    private func startWatchingInbox() {
+        guard inbox != nil else { return }
+        inboxTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.pollInbox()
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
+    }
+
+    private func pollInbox() {
+        guard let inbox else { return }
+        let ready = inboxScanner.readyFiles(in: inbox.inbox)
+        inboxQueue = ready.filter { !skippedInboxFiles.contains($0) && $0 != currentInboxFile }
+        startNextInboxFileIfIdle()
+    }
+
+    /// 手機來的音檔收到就自動轉，用目前的模式、語言、講者與潤飾設定。
+    /// 正在轉錄或正在聽某一句時不打斷，等下一輪再看。
+    private func startNextInboxFileIfIdle() {
+        guard !isRunning, !playback.isPlaying, let next = inboxQueue.first else { return }
+        inboxQueue.removeFirst()
+        setInput(next, fromInbox: true)
+        currentInboxFile = next
+        start()
+    }
+
+    private func finishInboxFile(_ outcome: Phase) {
+        guard let file = currentInboxFile else { return }
+        currentInboxFile = nil
+        guard case .finished = outcome, let inbox else {
+            skippedInboxFiles.insert(file)
+            return
+        }
+        do {
+            let moved = try inbox.markProcessed(file)
+            // 音檔搬走了，播放器改指到新位置，點句播放才能繼續用。
+            inputURL = moved
+            playback.load(moved)
+        } catch {
+            skippedInboxFiles.insert(file)
+            notices.append("逐字稿已存好，但音檔無法移到「已處理」：\(error.localizedDescription)")
+        }
     }
 
     private func handle(_ event: PipelineEvent) {

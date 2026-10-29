@@ -17,15 +17,10 @@ struct ContentView: View {
         .frame(minWidth: 600, minHeight: 520)
         .background(Color(nsColor: .windowBackgroundColor))
         .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first(where: Self.isSupportedFile) else { return false }
+            guard let url = urls.first(where: SupportedMedia.isSupported) else { return false }
             model.setInput(url)
             return true
         } isTargeted: { isDropTargeted = $0 }
-    }
-
-    static func isSupportedFile(_ url: URL) -> Bool {
-        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
-        return AppModel.supportedTypes.contains { type.conforms(to: $0) }
     }
 
     // MARK: - 上方：輸入、輸出、選項
@@ -42,13 +37,14 @@ struct ContentView: View {
                 action: model.chooseInput
             )
             .disabled(model.isRunning)
+            // 手機傳來的音檔，逐字稿固定存到 iCloud；這時點這一列是打開 iCloud 資料夾，不是改設定。
             PathRow(
-                symbol: "folder",
+                symbol: model.inputFromInbox ? "icloud" : "folder",
                 title: "輸出",
-                value: (model.outputDirectory.path as NSString).abbreviatingWithTildeInPath,
+                value: model.activeOutputDisplayPath,
                 placeholder: "",
                 highlighted: false,
-                action: model.chooseOutputDirectory,
+                action: model.inputFromInbox ? model.revealOutputDirectory : model.chooseOutputDirectory,
                 trailing: AnyView(
                     Button(action: model.revealOutputDirectory) {
                         Image(systemName: "arrow.up.forward.app")
@@ -124,6 +120,10 @@ struct ContentView: View {
             if model.playback.isLoaded {
                 PlaybackControls(playback: model.playback)
             }
+            if model.currentInboxFile != nil {
+                Label("手機傳來", systemImage: "iphone")
+                    .foregroundStyle(.secondary)
+            }
             if model.isRunning {
                 if let progress = model.progress {
                     ProgressView(value: progress)
@@ -148,6 +148,10 @@ struct ContentView: View {
             }
             ForEach(model.notices, id: \.self) { notice in
                 Text(notice).foregroundStyle(.orange)
+            }
+            if !model.inboxQueue.isEmpty {
+                Text("還有 \(model.inboxQueue.count) 個手機音檔待轉")
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             if case .finished = model.phase {

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TranscriberCore
 
 @main
 struct TranscriberApp: App {
@@ -20,6 +21,8 @@ struct TranscriberApp: App {
                 Button("打開音檔…") { model.chooseInput() }
                     .keyboardShortcut("o")
                     .disabled(model.isRunning)
+                Button("打開 iCloud 收件資料夾") { model.revealInbox() }
+                    .disabled(model.inbox == nil)
             }
         }
     }
@@ -40,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url = urls.first(where: ContentView.isSupportedFile) else { return }
+        guard let url = urls.first(where: SupportedMedia.isSupported) else { return }
         if let model {
             model.setInput(url)
         } else {

@@ -222,3 +222,72 @@ import Testing
         #expect(WhisperModelStore.relativePath(of: URL(fileURLWithPath: "/tmp/whisper")) == "/tmp/whisper")
     }
 }
+
+@Suite struct InboxTests {
+    private func makeFolders() throws -> InboxFolders {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("inbox-\(UUID().uuidString)")
+        let folders = InboxFolders(root: root)
+        try folders.createIfNeeded()
+        return folders
+    }
+
+    @Test func folderLayout() {
+        let folders = InboxFolders(root: URL(fileURLWithPath: "/x/Lisvo"))
+        #expect(folders.inbox.path == "/x/Lisvo/收件")
+        #expect(folders.processed.path == "/x/Lisvo/已處理")
+        #expect(folders.transcripts.path == "/x/Lisvo/逐字稿")
+    }
+
+    @Test func fileIsReadyOnlyAfterSizeStaysTheSame() throws {
+        let folders = try makeFolders()
+        defer { try? FileManager.default.removeItem(at: folders.root) }
+        let file = folders.inbox.appendingPathComponent("會議.m4a")
+        try Data(repeating: 1, count: 100).write(to: file)
+
+        var scanner = InboxScanner()
+        #expect(scanner.readyFiles(in: folders.inbox).isEmpty) // 第一次只記下大小
+        // 還在寫入：大小變了，不能處理。
+        try Data(repeating: 1, count: 200).write(to: file)
+        #expect(scanner.readyFiles(in: folders.inbox).isEmpty)
+        // 大小穩定：可以處理。
+        #expect(scanner.readyFiles(in: folders.inbox).map(\.lastPathComponent) == ["會議.m4a"])
+    }
+
+    @Test func ignoresHiddenEmptyAndNonMediaFiles() throws {
+        let folders = try makeFolders()
+        defer { try? FileManager.default.removeItem(at: folders.root) }
+        try Data([1]).write(to: folders.inbox.appendingPathComponent(".DS_Store"))
+        try Data([1]).write(to: folders.inbox.appendingPathComponent("筆記.txt"))
+        try Data().write(to: folders.inbox.appendingPathComponent("空的.m4a"))
+        try Data([1]).write(to: folders.inbox.appendingPathComponent("錄音.m4a"))
+
+        var scanner = InboxScanner()
+        _ = scanner.readyFiles(in: folders.inbox)
+        #expect(scanner.readyFiles(in: folders.inbox).map(\.lastPathComponent) == ["錄音.m4a"])
+    }
+
+    @Test func placeholderNames() {
+        #expect(InboxScanner.placeholderTarget(of: ".會議.m4a.icloud") == "會議.m4a")
+        #expect(InboxScanner.placeholderTarget(of: "會議.m4a") == nil)
+        #expect(InboxScanner.placeholderTarget(of: ".DS_Store") == nil)
+        #expect(InboxScanner.placeholderTarget(of: "..icloud") == nil)
+    }
+
+    @Test func markProcessedNeverOverwrites() throws {
+        let folders = try makeFolders()
+        defer { try? FileManager.default.removeItem(at: folders.root) }
+        for _ in 0..<2 {
+            try Data([1]).write(to: folders.inbox.appendingPathComponent("新錄音.m4a"))
+            try folders.markProcessed(folders.inbox.appendingPathComponent("新錄音.m4a"))
+        }
+        let names = try FileManager.default.contentsOfDirectory(atPath: folders.processed.path).sorted()
+        #expect(names == ["新錄音 (2).m4a", "新錄音.m4a"])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folders.inbox.path).isEmpty)
+    }
+
+    @Test func supportedMedia() {
+        #expect(SupportedMedia.isSupported(URL(fileURLWithPath: "/a/b.m4a")))
+        #expect(SupportedMedia.isSupported(URL(fileURLWithPath: "/a/b.mov")))
+        #expect(!SupportedMedia.isSupported(URL(fileURLWithPath: "/a/b.txt")))
+    }
+}

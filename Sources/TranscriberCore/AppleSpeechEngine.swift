@@ -81,6 +81,7 @@ public struct AppleSpeechEngine: SpeechEngine {
     static func makeTranscriber(
         language: TranscriptionLanguage,
         reportingOptions: Set<SpeechTranscriber.ReportingOption>,
+        attributeOptions: Set<SpeechTranscriber.ResultAttributeOption> = [.audioTimeRange],
         onStatus: (String) -> Void
     ) async throws -> (SpeechTranscriber, Locale) {
         guard let identifier = language.appleLocaleIdentifier else { throw AppleSpeechEngineError.languageRequired }
@@ -94,7 +95,7 @@ public struct AppleSpeechEngine: SpeechEngine {
             locale: locale,
             transcriptionOptions: [],
             reportingOptions: reportingOptions,
-            attributeOptions: [.audioTimeRange]
+            attributeOptions: attributeOptions
         )
 
         onStatus("確認語言模型")

@@ -5,7 +5,8 @@ import TranscriberCore
 // 命令列測試工具：跑和 App 完全相同的流程，用來驗證核心邏輯與量測速度。
 // 用法：transcriber-cli <音檔> [--mode fast|accurate] [--lang zhTW|yue|en|ja|ko|auto]
 //       [--speakers auto|N|off] [--polish] [--out 資料夾]
-//       transcriber-cli <音檔> --live [--speed 倍速] [--lang …]   模擬即時字幕：照時間一段一段送進辨識器
+//       transcriber-cli <音檔> --live [--speed 倍速] [--lang …] [--bilingual]   模擬即時字幕：照時間一段一段送進辨識器
+//       （--bilingual：同時跑英文辨識器，中英夾雜用）
 
 struct Options {
     var input: URL
@@ -17,10 +18,11 @@ struct Options {
     var output = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/逐字稿")
     var live = false
     var speed = 1.0
+    var bilingual = false
 }
 
 func usage() -> Never {
-    FileHandle.standardError.write(Data("用法：transcriber-cli <音檔> [--mode fast|accurate] [--lang zhTW|yue|en|ja|ko|auto] [--speakers auto|N|off] [--polish] [--out 資料夾]\n       transcriber-cli <音檔> --live [--speed 倍速] [--lang zhTW|yue|en|ja|ko]\n".utf8))
+    FileHandle.standardError.write(Data("用法：transcriber-cli <音檔> [--mode fast|accurate] [--lang zhTW|yue|en|ja|ko|auto] [--speakers auto|N|off] [--polish] [--out 資料夾]\n       transcriber-cli <音檔> --live [--speed 倍速] [--lang zhTW|yue|en|ja|ko] [--bilingual]\n".utf8))
     exit(2)
 }
 
@@ -58,6 +60,8 @@ func parse() -> Options {
             options.output = URL(fileURLWithPath: value(), isDirectory: true)
         case "--live":
             options.live = true
+        case "--bilingual":
+            options.bilingual = true
         case "--speed":
             guard let speed = Double(value()), speed > 0 else { usage() }
             options.speed = speed
@@ -81,6 +85,7 @@ func runLive() async throws {
 
     let live = try await LiveTranscriber.start(
         language: options.language,
+        withEnglish: options.bilingual,
         onStatus: { print("\(stamp()) [狀態] \($0)") },
         onEvent: { event in
             switch event {

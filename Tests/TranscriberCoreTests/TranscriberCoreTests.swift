@@ -366,3 +366,167 @@ import Testing
         #expect(!TranscriptionLanguage.auto.isSameLanguage(as: .en))
     }
 }
+
+@Suite struct BilingualMergeTests {
+    /// 英文辨識器的一句：每個字的文字、開始時間、信心。字的結束時間取下一個字的開始。
+    func sentence(_ words: [(String, Double, Double)], end: Double) -> EnglishSentence? {
+        let scored = words.enumerated().map { index, word in
+            let wordEnd = index + 1 < words.count ? words[index + 1].1 : end
+            return (word: TimedWord(text: word.0, start: word.1, end: wordEnd), confidence: word.2)
+        }
+        return EnglishSentence(words: scored)
+    }
+
+    @Test func finalSegmentSwapsGarbledEnglishByTime() throws {
+        // 中文辨識器把整句英文聽成亂碼（實測資料簡化）。
+        let words = [
+            TimedWord(text: "預算", start: 2.9, end: 3.2),
+            TimedWord(text: "。 ", start: 3.3, end: 3.5),
+            TimedWord(text: "I ", start: 3.6, end: 3.7),
+            TimedWord(text: "thinke ", start: 3.7, end: 4.3),
+            TimedWord(text: "shoudanist ", start: 4.3, end: 6.6),
+            TimedWord(text: "month.", start: 6.6, end: 8.5),
+            TimedWord(text: "好", start: 8.6, end: 8.8),
+            TimedWord(text: "那", start: 8.8, end: 9.0),
+        ]
+        let segment = TranscriptSegment(start: 2.9, end: 9.0, text: "預算。 I thinke shoudanist month.好那", words: words)
+        let english = try #require(sentence([(" I", 3.7, 0.92), (" think", 4.0, 0.96), (" we", 4.1, 0.98), (" should", 4.3, 0.99), (" focus.", 4.4, 0.9)], end: 8.4))
+
+        let merged = BilingualMerge.merge(segment, english: [english])
+        #expect(merged.text == "預算。 I think we should focus. 好那")
+        #expect(TextCleanup.tidy(merged.text, chinese: true) == "預算。I think we should focus. 好那")
+        #expect(merged.words.map(\.text) == ["預算", "。 ", " I", " think", " we", " should", " focus.", "好", "那"])
+        #expect(merged.id == segment.id)
+    }
+
+    @Test func lowConfidenceEnglishKeepsChineseResult() throws {
+        // 實測「這個 project 的 deadline 是下禮拜五…」交給英文辨識器的結果：中文被聽成拼音，信心很低。
+        let english = try #require(sentence([
+            ("Took", 0.0, 0.03), (" a", 0.4, 0.31), (" project,", 0.5, 0.74), (" the", 1.3, 0.91), (" deadline,", 1.3, 0.75),
+            (" Shi", 2.2, 0.48), (" Shali", 2.5, 0.24), (" Bai", 2.7, 0.54), (" Wu,", 3.2, 0.20), (" Women", 3.7, 0.23),
+            (" Yao", 4.1, 0.37), (" Xiang,", 4.3, 0.30), (" client", 5.0, 0.91), (" confirm", 5.3, 0.93), (" budget,", 6.0, 0.72),
+            (" Yang", 7.0, 0.58), (" Ho", 7.3, 0.14), (" marketing", 7.5, 0.93), (" team,", 8.2, 0.50), (" Hui", 8.8, 0.50),
+            (" Jiang,", 9.1, 0.03), (" big", 9.4, 0.22), (" proposal,", 9.7, 0.72), (" Tang", 10.7, 0.05), (" Jang,", 11.0, 0.08),
+            (" okay,", 11.6, 0.02), (" Ma.", 11.8, 0.36),
+        ], end: 12.0))
+        #expect(english.confidence < BilingualMerge.minimumConfidence)
+        // 頭尾信心低的字去掉了。
+        #expect(english.text.hasPrefix("project,"))
+        #expect(english.text.hasSuffix("proposal,"))
+
+        let words = [
+            TimedWord(text: "這", start: 0.0, end: 0.2), TimedWord(text: "個 ", start: 0.2, end: 0.3),
+            TimedWord(text: "project", start: 0.3, end: 1.1), TimedWord(text: "的 ", start: 1.1, end: 1.3),
+            TimedWord(text: "Client ", start: 4.6, end: 5.4), TimedWord(text: "conformbroget", start: 5.4, end: 6.8),
+            TimedWord(text: "然", start: 6.8, end: 7.1),
+        ]
+        let segment = TranscriptSegment(start: 0, end: 7.1, text: "這個 project的 Client conformbroget然", words: words)
+        #expect(BilingualMerge.merge(segment, english: [english]) == segment)
+        #expect(BilingualMerge.merge(volatile: "我們要先跟 Client conformbroget然後", english: [english]) == "我們要先跟 Client conformbroget然後")
+    }
+
+    @Test func punctuationOnlyEnglishIsDropped() {
+        // 實測英文辨識器聽一段純中文，有時只吐出一串信心幾乎是 0 的逗號。
+        #expect(sentence([(" ,", 8.0, 0.01), (" ,", 8.8, 0.01), (" ,", 9.1, 0.01)], end: 9.3) == nil)
+    }
+
+    @Test func volatileTextSwapsEachGarbledStretchInOrder() throws {
+        // 暫定文字沒有逐字時間，靠字母順序比對；兩段亂碼各自對到自己那句，不會被前一段搶走。
+        let first = try #require(sentence([("I think we should focus on the marketing plan 1st because the launch is next month.", 3.7, 0.9)], end: 8.8))
+        let second = try #require(sentence([("Sure, I will send the draft to everyone by Friday.", 12.4, 0.93)], end: 14.9))
+        let text = "今天的會議我們先討論下一季的預算。I thinkedanirst bcauseh lanchs next month好那行銷的部分請你下週提出來。Sureliveyoneriday"
+        let merged = TextCleanup.tidy(BilingualMerge.merge(volatile: text, english: [first, second]), chinese: true)
+        #expect(merged == "今天的會議我們先討論下一季的預算。I think we should focus on the marketing plan 1st because the launch is next month. 好那行銷的部分請你下週提出來。Sure, I will send the draft to everyone by Friday.")
+    }
+
+    @Test func volatileTextKeepsShortEnglishWordsInChinese() throws {
+        // 同一時段有一句真的英文，但中文句子裡的「Marketing team」不能被它換掉。
+        let english = try #require(sentence([("Sure, I will send the draft to everyone by Friday.", 12.4, 0.93)], end: 14.9))
+        let text = "然後 Marketing team會準備 preposal大家 OK嗎？"
+        #expect(BilingualMerge.merge(volatile: text, english: [english]) == text)
+    }
+
+    @Test func directionFollowsChineseCharacterCount() {
+        #expect(BilingualText.isChinese("這個 project 的 deadline"))
+        #expect(!BilingualText.isChinese("I think we should focus."))
+        #expect(!BilingualText.isChinese("OK 好"))
+        #expect(TranslationTarget.bilingual.resolved(for: "大家好，") == .en)
+        #expect(TranslationTarget.bilingual.resolved(for: "Thank you.") == .zhHant)
+        #expect(TranslationTarget.ja.resolved(for: "Thank you.") == .ja)
+    }
+
+    @Test func bilingualOptionOnlyWhenListeningToChinese() {
+        #expect(TranslationTarget.bilingual.isAvailable(listening: .zhTW))
+        #expect(!TranslationTarget.bilingual.isAvailable(listening: .en))
+        #expect(!TranslationTarget.bilingual.isAvailable(listening: .ja))
+        #expect(TranslationTarget.bilingual.directions(listening: .zhTW).count == 2)
+        #expect(TranslationTarget.bilingual.directions(listening: .en).isEmpty)
+        #expect(!TranslationTarget.zhHant.isAvailable(listening: .zhTW))
+        #expect(TranslationTarget.en.directions(listening: .zhTW) == [.en: Locale.Language(identifier: "zh-Hant")])
+    }
+
+    @Test func bilingualJoinSpacesOnlyAroundLatinText() {
+        #expect(TranslationTarget.bilingual.join(["Hello.", "你好。", "謝謝。", "", "Thanks."]) == "Hello. 你好。謝謝。 Thanks.")
+        #expect(TranslationTarget.zhHant.join(["你好。", "謝謝。"]) == "你好。謝謝。")
+        #expect(TranslationTarget.en.join(["Hello.", "", "Thanks."]) == "Hello. Thanks.")
+    }
+}
+
+@Suite struct BilingualLiveMergerTests {
+    final class EventLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [LiveEvent] = []
+        func append(_ event: LiveEvent) { lock.withLock { stored.append(event) } }
+        var finalized: [String] {
+            lock.withLock {
+                stored.compactMap { if case .finalized(let segment) = $0 { segment.text } else { nil } }
+            }
+        }
+        var lastVolatile: String? {
+            lock.withLock {
+                stored.compactMap { if case .volatile(let text) = $0 { text } else { nil } }.last
+            }
+        }
+    }
+
+    let garbled = TranscriptSegment(
+        start: 0, end: 5,
+        text: "好。 I thinke so",
+        words: [
+            TimedWord(text: "好", start: 0, end: 0.5), TimedWord(text: "。 ", start: 0.5, end: 1),
+            TimedWord(text: "I ", start: 1, end: 1.5), TimedWord(text: "thinke ", start: 1.5, end: 3), TimedWord(text: "so", start: 3, end: 5),
+        ]
+    )
+
+    func english() -> EnglishSentence? {
+        EnglishSentence(words: [
+            (TimedWord(text: " I", start: 1.1, end: 1.5), 0.95),
+            (TimedWord(text: " think", start: 1.5, end: 3), 0.95),
+            (TimedWord(text: " so.", start: 3, end: 4.9), 0.9),
+        ])
+    }
+
+    @Test func holdsChineseFinalUntilEnglishCatchesUp() async throws {
+        let log = EventLog()
+        let merger = BilingualLiveMerger(onEvent: log.append, tidy: { TextCleanup.tidy($0, chinese: true) })
+        await merger.chineseFinal(garbled)
+        // 英文還沒定案到這段結尾：先當暫定文字顯示，不送定案。
+        #expect(log.finalized.isEmpty)
+        #expect(log.lastVolatile == "好。I thinke so")
+
+        await merger.englishFinal(try #require(english()), end: 4.9)
+        #expect(log.finalized == ["好。I think so."])
+        #expect(log.lastVolatile == "")
+        #expect(await merger.finish().map(\.text) == ["好。I think so."])
+    }
+
+    @Test func releasesAfterWaitingWhenEnglishNeverCatchesUp() async throws {
+        let log = EventLog()
+        let merger = BilingualLiveMerger(onEvent: log.append, tidy: { TextCleanup.tidy($0, chinese: true) })
+        await merger.chineseFinal(garbled)
+        try await Task.sleep(for: BilingualLiveMerger.finalHold + .milliseconds(300))
+        // 等太久就照中文辨識的結果送出，不卡住字幕。
+        #expect(log.finalized == ["好。I thinke so"])
+        #expect(await merger.finish().map(\.text) == ["好。I thinke so"])
+    }
+}

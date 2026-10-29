@@ -136,7 +136,7 @@ struct ContentView: View {
                 }
                 .labelsHidden()
                 .fixedSize()
-                .help("用 Mac 內建翻譯在本機翻譯；第一次用某組語言時會請你下載語言包。")
+                .help("用 Mac 內建翻譯在本機翻譯；第一次用某組語言時會請你下載語言包。中英互譯（聽中文時才有）：同時聽中文和英文，中文翻成英文、英文翻成中文。")
             }
             .disabled(model.isLive || model.isRunning)
             Spacer(minLength: 0)

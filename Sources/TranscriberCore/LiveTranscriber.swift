@@ -45,25 +45,61 @@ public final class LiveTranscriber: @unchecked Sendable {
     }
 
     /// 準備好辨識器並開始接收聲音。語言包沒裝時會先下載。
+    /// - Parameter withEnglish: 同時跑英文辨識器（中英夾雜）。以 `language` 的結果為主，
+    ///   裡面聽成亂碼的整句英文換成英文辨識器的結果，合併方式見 BilingualMerge。
     public static func start(
         language: TranscriptionLanguage,
+        withEnglish: Bool = false,
         onStatus: @escaping @Sendable (String) -> Void,
         onEvent: @escaping @Sendable (LiveEvent) -> Void
     ) async throws -> LiveTranscriber {
+        // 與 Apple 的 timeIndexedProgressiveTranscription 預設相同：暫定文字＋快速出字。
+        // 沒有 fastResults 時實測要累積約 12 秒才出第一個字，不能當字幕用。
+        let reportingOptions: Set<SpeechTranscriber.ReportingOption> = [.volatileResults, .fastResults]
         let (transcriber, _) = try await AppleSpeechEngine.makeTranscriber(
             language: language,
-            // 與 Apple 的 timeIndexedProgressiveTranscription 預設相同：暫定文字＋快速出字。
-            // 沒有 fastResults 時實測要累積約 12 秒才出第一個字，不能當字幕用。
-            reportingOptions: [.volatileResults, .fastResults],
+            reportingOptions: reportingOptions,
             onStatus: onStatus
         )
-        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+        var english: SpeechTranscriber?
+        if withEnglish {
+            // 合併時要用每個字的信心分數判斷英文辨識器是不是把中文硬聽成英文。
+            (english, _) = try await AppleSpeechEngine.makeTranscriber(
+                language: .en,
+                reportingOptions: reportingOptions,
+                attributeOptions: [.audioTimeRange, .transcriptionConfidence],
+                onStatus: onStatus
+            )
+        }
+        // 兩個辨識器放在同一個分析器裡，吃同一份聲音。
+        let modules: [any SpeechModule] = [transcriber] + (english.map { [$0] } ?? [])
+        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: modules) else {
             throw LiveTranscriberError.noAudioFormat
         }
 
         let chinese = language.wantsTraditionalChinese
         // 結果要和分析同時讀，否則辨識會卡住。
-        let collector = Task<[TranscriptSegment], Never> {
+        let collector: Task<[TranscriptSegment], Never>
+        if let english {
+            collector = collectBilingual(primary: transcriber, english: english, chinese: chinese, onEvent: onEvent)
+        } else {
+            collector = collect(transcriber, chinese: chinese, onEvent: onEvent)
+        }
+
+        let (stream, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .unbounded)
+        let analyzer = SpeechAnalyzer(modules: modules)
+        try await analyzer.prepareToAnalyze(in: format)
+        try await analyzer.start(inputSequence: stream)
+        onStatus("即時字幕中")
+        return LiveTranscriber(analyzer: analyzer, analyzerFormat: format, input: continuation, collector: collector)
+    }
+
+    private static func collect(
+        _ transcriber: SpeechTranscriber,
+        chinese: Bool,
+        onEvent: @escaping @Sendable (LiveEvent) -> Void
+    ) -> Task<[TranscriptSegment], Never> {
+        Task {
             var segments: [TranscriptSegment] = []
             do {
                 for try await result in transcriber.results {
@@ -84,13 +120,63 @@ public final class LiveTranscriber: @unchecked Sendable {
             }
             return segments
         }
+    }
 
-        let (stream, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self, bufferingPolicy: .unbounded)
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
-        try await analyzer.prepareToAnalyze(in: format)
-        try await analyzer.start(inputSequence: stream)
-        onStatus("即時字幕中")
-        return LiveTranscriber(analyzer: analyzer, analyzerFormat: format, input: continuation, collector: collector)
+    /// 中英同時辨識：兩個辨識器的結果都交給 BilingualLiveMerger，由它依序送出合併後的事件。
+    /// 英文辨識器只用定案結果：暫定結果沒有逐字時間和信心分數（實測），無法判斷哪些字可信。
+    private static func collectBilingual(
+        primary: SpeechTranscriber,
+        english: SpeechTranscriber,
+        chinese: Bool,
+        onEvent: @escaping @Sendable (LiveEvent) -> Void
+    ) -> Task<[TranscriptSegment], Never> {
+        let merger = BilingualLiveMerger(
+            onEvent: onEvent,
+            tidy: { Self.dropLeadingPunctuation(TextCleanup.tidy($0, chinese: chinese)) }
+        )
+        return Task {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    do {
+                        for try await result in primary.results {
+                            if result.isFinal {
+                                guard let segment = AppleSpeechEngine.makeSegment(from: result) else { continue }
+                                await merger.chineseFinal(segment)
+                            } else {
+                                let start = result.range.start.seconds
+                                await merger.chineseVolatile(String(result.text.characters), start: start.isFinite ? start : 0)
+                            }
+                        }
+                    } catch {
+                        // 停止或取消時串流會結束或丟錯；已定案的句子由 merger 照樣回傳。
+                    }
+                }
+                group.addTask {
+                    do {
+                        for try await result in english.results where result.isFinal {
+                            let end = result.range.end.seconds
+                            await merger.englishFinal(Self.englishSentence(from: result), end: end.isFinite ? end : nil)
+                        }
+                    } catch {
+                        // 同上。
+                    }
+                }
+            }
+            return await merger.finish()
+        }
+    }
+
+    /// 英文辨識器定案的一句，連同每個字的時間和信心分數。
+    private static func englishSentence(from result: SpeechTranscriber.Result) -> EnglishSentence? {
+        let text = result.text
+        var scored: [(word: TimedWord, confidence: Double)] = []
+        for run in text.runs {
+            guard let range = run.audioTimeRange, let confidence = run.transcriptionConfidence else { continue }
+            let piece = String(text[run.range].characters)
+            guard !piece.isEmpty else { continue }
+            scored.append((TimedWord(text: piece, start: range.start.seconds, end: range.end.seconds), confidence))
+        }
+        return EnglishSentence(words: scored)
     }
 
     /// 送進一段聲音。任何格式都可以，這裡會轉成辨識器要的格式。

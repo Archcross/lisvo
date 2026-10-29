@@ -8,6 +8,8 @@ public enum TranslationTarget: String, CaseIterable, Identifiable, Sendable {
     case en
     case ja
     case ko
+    /// 中英夾雜：中文的段落翻成英文、英文的段落翻成繁體中文，同時跑中文和英文兩個辨識器。
+    case bilingual
 
     public var id: String { rawValue }
 
@@ -18,24 +20,80 @@ public enum TranslationTarget: String, CaseIterable, Identifiable, Sendable {
         case .en: "英文"
         case .ja: "日文"
         case .ko: "韓文"
+        case .bilingual: "中英互譯"
         }
     }
 
+    /// 固定翻成的語言。中英互譯每段的方向不同，是 nil（見 `resolved(for:)`）。
     public var language: Locale.Language? {
         switch self {
-        case .off: nil
         case .zhHant: Locale.Language(identifier: "zh-Hant")
         case .en: Locale.Language(identifier: "en")
         case .ja: Locale.Language(identifier: "ja")
         case .ko: Locale.Language(identifier: "ko")
+        case .off, .bilingual: nil
         }
     }
 
-    /// 譯文句子之間要不要加空格：中日文不加，英韓文加。
-    public var sentenceJoiner: String {
+    /// 要不要同時跑英文辨識器。中文辨識器會把整句英文聽成亂碼，互譯時要靠英文辨識器補上。
+    public var needsEnglishRecognition: Bool { self == .bilingual }
+
+    /// 這段原文要翻成哪種語言：中英互譯時中文翻英文、其餘翻繁體中文，其他選項就是自己。
+    public func resolved(for text: String) -> TranslationTarget {
+        guard self == .bilingual else { return self }
+        return BilingualText.isChinese(text) ? .en : .zhHant
+    }
+
+    /// 「聽」選這個語言時，選單裡有沒有這個翻譯選項。
+    /// 中英互譯以中文辨識結果為主（見 BilingualMerge），只在聽中文（台灣）時提供。
+    public func isAvailable(listening source: TranscriptionLanguage) -> Bool {
         switch self {
-        case .zhHant, .ja: ""
-        case .off, .en, .ko: " "
+        case .off: true
+        case .bilingual: source == .zhTW
+        default: !source.isSameLanguage(as: self)
+        }
+    }
+
+    /// 這次字幕要準備的翻譯方向：譯文語言 → 原文語言。中英互譯有兩個方向。
+    public func directions(listening source: TranscriptionLanguage) -> [TranslationTarget: Locale.Language] {
+        guard isAvailable(listening: source) else { return [:] }
+        switch self {
+        case .off:
+            return [:]
+        case .bilingual:
+            return [.en: Locale.Language(identifier: "zh-Hant"), .zhHant: Locale.Language(identifier: "en")]
+        default:
+            guard let from = source.translationSource else { return [:] }
+            return [self: from]
+        }
+    }
+
+    /// 把幾段譯文接起來：中日文之間不加空格，有英文或韓文的一側加空格。
+    /// 中英互譯時同一行會同時有中文和英文譯文，所以看接縫兩邊的字決定。
+    public func join(_ parts: [String]) -> String {
+        let parts = parts.filter { !$0.isEmpty }
+        switch self {
+        case .zhHant, .ja: return parts.joined()
+        case .off, .en, .ko: return parts.joined(separator: " ")
+        case .bilingual:
+            var result = ""
+            for part in parts {
+                if let last = result.last, let first = part.first,
+                   !(Self.isWideCharacter(last) && Self.isWideCharacter(first)) {
+                    result += " "
+                }
+                result += part
+            }
+            return result
+        }
+    }
+
+    /// 中日文字或全形標點：兩側都是這種字時不加空格。
+    private static func isWideCharacter(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            scalar.properties.isIdeographic
+                || (0x3000...0x30FF).contains(scalar.value)   // 中日文標點、假名
+                || (0xFF00...0xFFEF).contains(scalar.value)   // 全形標點
         }
     }
 }
@@ -60,7 +118,7 @@ extension TranscriptionLanguage {
         }
     }
 
-    /// 來源和翻譯目標是同一種語言時不用翻。
+    /// 來源和翻譯目標是同一種語言時不用翻。中英互譯沒有固定的目標語言，不算相同。
     public func isSameLanguage(as target: TranslationTarget) -> Bool {
         guard let source = translationSource, let destination = target.language else { return false }
         return source.languageCode == destination.languageCode
@@ -161,11 +219,13 @@ public enum UnfinishedTranslationPolicy {
 public enum LiveTranslatorError: LocalizedError {
     case unsupported
     case sameLanguage
+    case bilingualNeedsChinese
 
     public var errorDescription: String? {
         switch self {
         case .unsupported: "這組語言 Mac 內建翻譯不支援。"
         case .sameLanguage: "辨識語言和翻譯語言相同，不需要翻譯。"
+        case .bilingualNeedsChinese: "中英互譯要在「聽」選中文（台灣）時使用。"
         }
     }
 }
@@ -214,7 +274,7 @@ public enum LiveTranslationExport {
     public static func translation(of segment: TranscriptSegment, cache: [String: String], target: TranslationTarget) -> String? {
         let parts = SentenceSplitter.allSentences(segment.text).map { cache[$0] }
         guard !parts.isEmpty, parts.allSatisfy({ $0 != nil }) else { return nil }
-        return parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: target.sentenceJoiner)
+        return target.join(parts.compactMap { $0 })
     }
 
     public static func text(segments: [TranscriptSegment], cache: [String: String], target: TranslationTarget) -> String {

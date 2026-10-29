@@ -40,6 +40,9 @@ Mac 原生的語音轉文字 App：分講者、輸出時間軸，全部在本機
 # 組成 build/Lisvo.app（本機臨時簽署）
 scripts/build-app.sh
 
+# 改了 Resources/Icon/AppIcon.svg 之後，重新產生 App 圖示（需要 brew install librsvg）
+scripts/make-icon.sh
+
 # 命令列測試：和 App 走同一套流程
 swift run transcriber-cli 音檔.m4a --mode accurate --lang zhTW --speakers auto --polish
 ```

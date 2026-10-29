@@ -300,3 +300,48 @@ import Testing
         #expect(LiveTranscriber.dropLeadingPunctuation("大家好。") == "大家好。")
     }
 }
+
+@Suite struct LiveTranslationTests {
+    @Test func splitsChineseSentencesAndKeepsUnfinishedPart() {
+        let result = SentenceSplitter.split("大家好，今天討論預算。你覺得呢？我認為主要是")
+        #expect(result.complete == ["大家好，今天討論預算。", "你覺得呢？"])
+        #expect(result.remainder == "我認為主要是")
+    }
+
+    @Test func englishPeriodRules() {
+        let result = SentenceSplitter.split("Revenue grew 3.2 percent. The U.S. team agrees. Next")
+        #expect(result.complete == ["Revenue grew 3.2 percent.", "The U.S. team agrees."])
+        #expect(result.remainder == "Next")
+    }
+
+    @Test func closingQuoteStaysWithSentence() {
+        let result = SentenceSplitter.split("他說：「好的。」然後")
+        #expect(result.complete == ["他說：「好的。」"])
+        #expect(result.remainder == "然後")
+    }
+
+    @Test func punctuationOnlyIsNotASentence() {
+        #expect(SentenceSplitter.split("。！").complete.isEmpty)
+        #expect(SentenceSplitter.allSentences("好。還沒講完") == ["好。", "還沒講完"])
+    }
+
+    @Test func exportJoinsSentenceTranslationsPerSegment() {
+        let segments = [
+            TranscriptSegment(start: 3, end: 10, text: "大家好。今天開會", speaker: nil),
+            TranscriptSegment(start: 12, end: 20, text: "沒問題。", speaker: nil),
+        ]
+        let cache = ["大家好。": "Hello everyone.", "今天開會": "We meet today", "沒問題。": ""]
+        let text = LiveTranslationExport.text(segments: segments, cache: cache, target: .en)
+        #expect(text == "[00:00:03] Hello everyone. We meet today\n[00:00:12] （翻譯失敗）\n")
+        // 還有句子沒翻好時標示未翻譯，不默默漏掉。
+        let missing = LiveTranslationExport.text(segments: segments, cache: [:], target: .en)
+        #expect(missing.hasPrefix("[00:00:03] （未翻譯）"))
+    }
+
+    @Test func sameLanguageIsSkipped() {
+        #expect(TranscriptionLanguage.zhTW.isSameLanguage(as: .zhHant))
+        #expect(TranscriptionLanguage.yue.isSameLanguage(as: .zhHant))
+        #expect(!TranscriptionLanguage.en.isSameLanguage(as: .zhHant))
+        #expect(!TranscriptionLanguage.auto.isSameLanguage(as: .en))
+    }
+}

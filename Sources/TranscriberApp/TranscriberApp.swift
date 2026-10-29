@@ -13,7 +13,7 @@ struct TranscriberApp: App {
                 .environment(model)
                 .onAppear { appDelegate.model = model }
         }
-        .defaultSize(width: 760, height: 640)
+        .defaultSize(width: 760, height: 680)
         .commands {
             // 不放在「新增」位置：macOS 開檔或重新啟動 App 時會自動觸發「新增」，會意外跳出選檔視窗。
             CommandGroup(replacing: .newItem) {}

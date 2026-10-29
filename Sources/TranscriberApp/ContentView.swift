@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TranscriberCore
+import Translation
 import UniformTypeIdentifiers
 
 struct ContentView: View {
@@ -14,13 +15,19 @@ struct ContentView: View {
             transcript
             statusBar
         }
-        .frame(minWidth: 600, minHeight: 520)
+        // 上方一列要放得下：模式、語言、講者、潤飾、開始轉錄（約 600 點），再窄會擠壓換行。
+        .frame(minWidth: 660, minHeight: 560)
         .background(Color(nsColor: .windowBackgroundColor))
         .dropDestination(for: URL.self) { urls, _ in
             guard let url = urls.first(where: SupportedMedia.isSupported) else { return false }
             model.setInput(url)
             return true
         } isTargeted: { isDropTargeted = $0 }
+        // 即時翻譯的語言包還沒下載時，由這裡跳出系統的下載提示。
+        .translationTask(model.translationDownloadRequest) { session in
+            await LiveTranslator.prepareDownload(LiveTranslator.SessionBox(session))
+            await model.translationDownloadFinished()
+        }
     }
 
     // MARK: - 上方：輸入、輸出、選項
@@ -88,20 +95,61 @@ struct ContentView: View {
                 if model.isRunning {
                     Button("停止", role: .cancel, action: model.stop)
                         .keyboardShortcut(.cancelAction)
-                } else if model.isLive {
-                    Button("停止字幕", role: .cancel, action: model.toggleLive)
-                        .keyboardShortcut(.cancelAction)
-                        .disabled(model.isStartingLive)
                 } else {
-                    Button("即時字幕", action: model.toggleLive)
-                        .help("把 Mac 正在播放的聲音（網頁、會議、任何 App）即時轉成字幕，顯示在浮動視窗。只用快速模式，不分講者、不潤飾。")
                     Button("開始轉錄", action: model.start)
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                         .disabled(!model.canStart)
                 }
             }
+
+            liveRow
         }
+    }
+
+    /// 即時字幕自成一列：聽什麼語言、要不要翻譯，跟上面的檔案轉錄設定分開。
+    private var liveRow: some View {
+        @Bindable var model = model
+        return HStack(spacing: 10) {
+            Image(systemName: "captions.bubble")
+                .frame(width: 18)
+                .foregroundStyle(.secondary)
+            Text("即時字幕")
+                .foregroundStyle(.secondary)
+            Group {
+                Text("聽").foregroundStyle(.secondary)
+                Picker("聽", selection: $model.liveSource) {
+                    ForEach(AppModel.liveSourceOptions) { Text($0.displayName).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("影片或會議裡說的語言。Mac 內建即時辨識不能自動偵測，要先選。")
+                Text("譯成").foregroundStyle(.secondary)
+                Picker("譯成", selection: $model.liveTranslation) {
+                    ForEach(model.liveTranslationOptions) { Text($0.label).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("用 Mac 內建翻譯在本機翻譯；第一次用某組語言時會請你下載語言包。")
+            }
+            .disabled(model.isLive || model.isRunning)
+            Spacer(minLength: 0)
+            if model.isLive {
+                Button("停止字幕", role: .cancel, action: model.toggleLive)
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(model.isStartingLive)
+            } else {
+                Button("開始字幕", action: model.toggleLive)
+                    .disabled(model.isRunning)
+                    .help("把 Mac 正在播放的聲音（網頁、會議、任何 App）即時轉成字幕，顯示在浮動視窗。不分講者、不潤飾。")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+        )
     }
 
     // MARK: - 中間：逐字稿

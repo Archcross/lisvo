@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import TranscriberCore
+import Translation
 import UniformTypeIdentifiers
 
 /// 講者人數選單：0 = 不分講者，-1 = 自動判斷，其餘為指定人數。
@@ -51,6 +52,26 @@ final class AppModel {
     var polish: Bool {
         didSet { UserDefaults.standard.set(polish, forKey: Keys.polish) }
     }
+    /// 即時字幕要聽的語言（影片或會議裡說的話）。和檔案轉錄的語言分開記：
+    /// Apple 即時辨識不能自動偵測語言，共用同一個選單時，看英文影片很容易忘了切換，結果用中文模型聽英文。
+    var liveSource: TranscriptionLanguage {
+        didSet {
+            UserDefaults.standard.set(liveSource.rawValue, forKey: Keys.liveSource)
+            // 換了要聽的語言後，原本的翻譯目標可能變成同一種語言，那就改回不翻譯。
+            if liveSource.isSameLanguage(as: liveTranslation) { liveTranslation = .off }
+        }
+    }
+    /// 即時字幕要翻成哪種語言。
+    var liveTranslation: TranslationTarget {
+        didSet { UserDefaults.standard.set(liveTranslation.rawValue, forKey: Keys.liveTranslation) }
+    }
+
+    /// 即時字幕可以聽的語言：Apple 即時辨識一定要指定，所以沒有「自動偵測」。
+    static let liveSourceOptions = TranscriptionLanguage.allCases.filter { $0 != .auto }
+    /// 翻譯選單不列出和「聽」同一種的語言，避免中文翻中文。
+    var liveTranslationOptions: [TranslationTarget] {
+        TranslationTarget.allCases.filter { !liveSource.isSameLanguage(as: $0) }
+    }
 
     private(set) var phase: Phase = .idle
     private(set) var stageText = ""
@@ -94,6 +115,19 @@ final class AppModel {
     private var liveLanguage: TranscriptionLanguage = .zhTW
     private let subtitleWindow = SubtitleWindowController()
 
+    /// 這次字幕有沒有開翻譯；決定字幕視窗要不要顯示譯文那一行。
+    private(set) var isTranslatingLive = false
+    /// 字幕視窗的譯文：目前這段裡最後兩句已翻好的句子。
+    private(set) var liveTranslationLine = ""
+    /// 要下載的翻譯語言包。設定後主視窗會跳出系統的下載提示，下載完呼叫 translationDownloadFinished。
+    private(set) var translationDownloadRequest: TranslationSession.Configuration?
+    private var liveTranslationTarget: TranslationTarget = .off
+    /// 原句 → 譯文。同一句（暫定時看過、定案後又出現）只翻一次。
+    private var translationCache: [String: String] = [:]
+    private var translationRequested: Set<String> = []
+    private var translationQueue: AsyncStream<String>.Continuation?
+    private var translationWorker: Task<Void, Never>?
+
     var isRunning: Bool { phase == .running }
 
     var languageOptions: [TranscriptionLanguage] {
@@ -108,6 +142,8 @@ final class AppModel {
         static let language = "language"
         static let speakers = "speakerChoice"
         static let polish = "polish"
+        static let liveTranslation = "liveTranslation"
+        static let liveSource = "liveSource"
     }
 
     init() {
@@ -123,6 +159,11 @@ final class AppModel {
         language = defaults.string(forKey: Keys.language).flatMap(TranscriptionLanguage.init(rawValue:)) ?? .zhTW
         speakerChoice = defaults.object(forKey: Keys.speakers) as? Int ?? SpeakerChoice.auto
         polish = defaults.bool(forKey: Keys.polish)
+        var source = defaults.string(forKey: Keys.liveSource).flatMap(TranscriptionLanguage.init(rawValue:)) ?? .zhTW
+        if source == .auto { source = .zhTW }
+        let savedTranslation = defaults.string(forKey: Keys.liveTranslation).flatMap(TranslationTarget.init(rawValue:)) ?? .off
+        liveSource = source
+        liveTranslation = source.isSameLanguage(as: savedTranslation) ? .off : savedTranslation
         inbox = Self.prepareInbox()
         if mode == .fast, language == .auto { language = .zhTW }
         startWatchingInbox()
@@ -329,7 +370,7 @@ final class AppModel {
         sideStageText = ""
         progress = nil
         stageText = "準備即時字幕"
-        liveLanguage = language == .auto ? .zhTW : language
+        liveLanguage = liveSource
 
         // 辨識結果依序排進串流，由主執行緒照順序更新畫面，避免先後顛倒。
         let (events, continuation) = AsyncStream.makeStream(of: LiveEvent.self, bufferingPolicy: .unbounded)
@@ -358,12 +399,14 @@ final class AppModel {
             liveCapture = capture
             liveStartedAt = Date()
             stageText = "即時字幕中"
-            subtitleWindow.show(model: self)
+            await prepareLiveTranslation()
+            subtitleWindow.show(model: self, translating: isTranslatingLive)
         } catch {
             continuation.finish()
             await liveConsumer?.value
             liveEvents = nil
             liveConsumer = nil
+            resetLiveTranslation()
             isLive = false
             stageText = ""
             phase = .failed(error.localizedDescription)
@@ -383,6 +426,12 @@ final class AppModel {
         await liveConsumer?.value
         liveEvents = nil
         liveConsumer = nil
+        // 最後幾句還在排隊翻譯，等它們翻完再存檔。
+        translationQueue?.finish()
+        await translationWorker?.value
+        let translated = translationWorker != nil ? translationCache : nil
+        let translationTarget = liveTranslationTarget
+        resetLiveTranslation()
         subtitleWindow.hide()
         liveVolatile = ""
         segments = finalSegments
@@ -407,6 +456,10 @@ final class AppModel {
         let folder = TranscriptionPipeline.uniqueFolder(in: outputDirectory, baseName: "即時字幕")
         do {
             _ = try Exporter.write(transcript, baseName: "即時字幕", to: folder)
+            if let translated {
+                let text = LiveTranslationExport.text(segments: finalSegments, cache: translated, target: translationTarget)
+                try text.write(to: folder.appendingPathComponent("即時字幕_翻譯.txt"), atomically: true, encoding: .utf8)
+            }
             phase = .finished(folder)
             stageText = "已存檔"
         } catch {
@@ -419,9 +472,108 @@ final class AppModel {
         switch event {
         case .volatile(let text):
             liveVolatile = text
+            // 暫定文字裡已經講完的句子就先翻，不等定案（定案約 15 秒一次，等它譯文會落後太多）。
+            requestTranslation(of: SentenceSplitter.split(text).complete)
         case .finalized(let segment):
             segments.append(segment)
+            requestTranslation(of: SentenceSplitter.allSentences(segment.text))
         }
+        refreshTranslationLine()
+    }
+
+    // MARK: - 即時翻譯
+
+    /// 決定這次字幕要不要翻譯：語言包已安裝就開始；還沒下載就請主視窗跳出下載提示，字幕先不翻。
+    private func prepareLiveTranslation() async {
+        resetLiveTranslation()
+        liveTranslationTarget = liveTranslation
+        guard liveTranslation != .off,
+              let source = liveLanguage.translationSource,
+              let target = liveTranslation.language
+        else { return }
+        if liveLanguage.isSameLanguage(as: liveTranslation) {
+            notices.append(LiveTranslatorError.sameLanguage.localizedDescription)
+            return
+        }
+        isTranslatingLive = true
+        switch await LiveTranslator.status(from: source, to: target) {
+        case .installed:
+            startTranslationWorker(source: source, target: target)
+        case .supported:
+            liveTranslationLine = "下載翻譯語言包中…"
+            translationDownloadRequest = TranslationSession.Configuration(source: source, target: target)
+        case .unsupported:
+            isTranslatingLive = false
+            notices.append(LiveTranslatorError.unsupported.localizedDescription)
+        @unknown default:
+            isTranslatingLive = false
+        }
+    }
+
+    /// 主視窗的下載提示結束後呼叫（下載完成或使用者取消都會呼叫）。
+    func translationDownloadFinished() async {
+        guard let request = translationDownloadRequest else { return }
+        translationDownloadRequest = nil
+        guard isLive, isTranslatingLive, let source = request.source, let target = request.target else { return }
+        if await LiveTranslator.status(from: source, to: target) == .installed {
+            liveTranslationLine = ""
+            startTranslationWorker(source: source, target: target)
+            // 下載期間已經定案的句子補翻，存檔時譯文才完整。
+            for segment in segments {
+                requestTranslation(of: SentenceSplitter.allSentences(segment.text))
+            }
+        } else {
+            isTranslatingLive = false
+            liveTranslationLine = ""
+            notices.append("沒有下載翻譯語言包，這次字幕不翻譯。")
+        }
+    }
+
+    /// 一條工作依序翻譯排進來的句子，翻好就更新字幕的譯文行。
+    private func startTranslationWorker(source: Locale.Language, target: Locale.Language) {
+        let translator = LiveTranslator(source: source, target: target)
+        let (stream, continuation) = AsyncStream.makeStream(of: String.self, bufferingPolicy: .unbounded)
+        translationQueue = continuation
+        translationWorker = Task { @MainActor [weak self] in
+            for await sentence in stream {
+                // 翻譯失敗的句子記成空字串，不重試，避免卡住後面的句子。
+                let translated = (try? await translator.translate(sentence)) ?? ""
+                guard let self else { return }
+                self.translationCache[sentence] = translated
+                self.refreshTranslationLine()
+            }
+        }
+    }
+
+    private func requestTranslation(of sentences: [String]) {
+        guard let translationQueue else { return }
+        for sentence in sentences where !translationRequested.contains(sentence) {
+            translationRequested.insert(sentence)
+            translationQueue.yield(sentence)
+        }
+    }
+
+    /// 譯文行顯示目前這段文字裡最後兩句已翻好的句子；這段還沒有翻好的句子時，保留上一行，畫面不會閃空。
+    private func refreshTranslationLine() {
+        guard translationQueue != nil else { return }
+        let sentences = liveVolatile.isEmpty
+            ? SentenceSplitter.allSentences(segments.last?.text ?? "")
+            : SentenceSplitter.split(liveVolatile).complete
+        let translated = sentences.compactMap { translationCache[$0] }.filter { !$0.isEmpty }
+        guard !translated.isEmpty else { return }
+        liveTranslationLine = translated.suffix(2).joined(separator: liveTranslationTarget.sentenceJoiner)
+    }
+
+    private func resetLiveTranslation() {
+        translationQueue?.finish()
+        translationWorker?.cancel()
+        translationQueue = nil
+        translationWorker = nil
+        translationCache = [:]
+        translationRequested = []
+        translationDownloadRequest = nil
+        liveTranslationLine = ""
+        isTranslatingLive = false
     }
 
     /// 系統中途停止擷取（例如從選單列的錄製圖示關掉）：照常結束並存檔。

@@ -35,6 +35,8 @@
 	<string>public.app-category.productivity</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 ArchCross. All rights reserved.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>即時字幕選「麥克風」時，聽現場的聲音並在本機轉成字幕，不會上傳。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

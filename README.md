@@ -84,14 +84,43 @@ iOS 版本不同，選項名稱可能略有差異。
 - Apple 晶片的 Mac，macOS 26 以上
 - AI 潤飾需要開啟 Apple Intelligence
 
+## 安裝
+
+到 [Releases](https://github.com/Archcross/lisvo/releases) 下載 `Lisvo-版本.zip`，解壓縮後把 `Lisvo.app` 拖進「應用程式」資料夾。
+繁體中文系統上，App 會顯示成「聽字」。
+
+### 第一次打開會被 macOS 擋下
+
+Lisvo 沒有經過 Apple 公證（notarization）。公證要先加入 Apple 付費開發者計畫（每年 99 美元），
+這個專案目前沒有付費，所以第一次打開時 macOS 會跳出「無法打開」的警告。許多個人開發的免費、開源 Mac App 也是這樣發佈。
+程式碼全部公開在這裡，不放心的話可以自己從原始碼建置（見下方「開發」）。
+
+照下面做一次就好，之後可以直接打開：
+
+1. 在「應用程式」資料夾雙按 Lisvo，出現警告時按「完成」。
+2. 選擇「蘋果」選單 >「系統設定」，在側邊欄按「隱私權與安全性」。
+3. 往下捲到「安全性」，Lisvo 那一行按「打開」，再按「強制打開」。這個按鈕在嘗試打開後約一小時內才會出現，過了就回到第 1 步重來。
+4. 輸入登入密碼，按「好」。
+
+步驟依照 Apple 的說明〈[打開未識別開發者的 Mac App](https://support.apple.com/zh-tw/guide/mac-help/mh40616/mac)〉。
+
+### 其他限制
+
+- 只支援 Apple 晶片的 Mac、macOS 26 以上（見「系統需求」）。
+- 每次更新到新版，macOS 都會把它當成新的 App：「螢幕與系統錄音」與「麥克風」權限要重新允許，上面的打開步驟可能也要再做一次。
+- 精準模式第一次使用會下載 Whisper 模型，分講者第一次使用會下載分講者模型，都要連網。
+- 第三方套件的授權全文放在 App 裡：在 `Lisvo.app` 按右鍵「顯示套件內容」，位置是 `Contents/Resources/Licenses`。
+
 ## 開發
 
-需要 Xcode 26 以上（macOS 26 SDK）。沒有提供打包好的 App：沒有經過 Apple 公證（notarization），
-下載別人建置的 App 會被 macOS 擋下，請自己從原始碼建置。
+需要 Xcode 26 以上（macOS 26 SDK）。
 
 ```bash
 # 組成 build/Lisvo.app
 scripts/build-app.sh
+
+# 組成發佈用的 build/Lisvo-版本.zip（上傳到 GitHub Releases）
+scripts/package-release.sh
 
 # 改了 Resources/Icon/AppIcon.svg 之後，重新產生 App 圖示（需要 brew install librsvg）
 scripts/make-icon.sh

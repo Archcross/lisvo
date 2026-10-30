@@ -25,6 +25,23 @@ for lproj in "$ROOT/Resources"/*.lproj(N); do
   cp -R "$lproj" "$APP/Contents/Resources/"
 done
 
+# 授權檔放進 Resources/Licenses：App 裡編進了第三方套件的程式碼，散布 App 時要附上它們的授權全文。
+# 套件原始碼在 SwiftPM 的 .build/checkouts；少了任何一份就停下來，不打包缺授權檔的 App。
+CHECKOUTS="$ROOT/.build/checkouts"
+LICENSES="$APP/Contents/Resources/Licenses"
+mkdir -p "$LICENSES"
+for pair in \
+  "$ROOT/LICENSE:Lisvo-LICENSE" \
+  "$ROOT/NOTICE:Lisvo-NOTICE" \
+  "$CHECKOUTS/argmax-oss-swift/LICENSE:WhisperKit-LICENSE" \
+  "$CHECKOUTS/argmax-oss-swift/NOTICES:WhisperKit-NOTICES" \
+  "$CHECKOUTS/FluidAudio/LICENSE:FluidAudio-LICENSE" \
+  "$CHECKOUTS/swift-argument-parser/LICENSE.txt:swift-argument-parser-LICENSE"; do
+  cp "${pair%%:*}" "$LICENSES/${pair##*:}"
+done
+# FluidAudio 內含的其他套件授權（含子資料夾），整個資料夾照原樣複製。
+cp -R "$CHECKOUTS/FluidAudio/ThirdPartyLicenses" "$LICENSES/FluidAudio-ThirdParty"
+
 # SwiftPM 套件的資源包（例如 FluidAudio 的音素表）放進 Resources。
 for bundle in "$BIN_DIR"/*.bundle(N); do
   cp -R "$bundle" "$APP/Contents/Resources/"

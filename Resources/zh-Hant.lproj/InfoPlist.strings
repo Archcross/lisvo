@@ -2,4 +2,4 @@
 CFBundleName = "聽哦";
 CFBundleDisplayName = "聽哦";
 /* 「關於聽哦」視窗與 Finder「取得資訊」顯示的版權文字。 */
-NSHumanReadableCopyright = "© 2026 ArchCross 版權所有";
+NSHumanReadableCopyright = "© 2026 ArchCross，以 Apache 2.0 授權";

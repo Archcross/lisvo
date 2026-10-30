@@ -86,6 +86,9 @@ iOS 版本不同，選項名稱可能略有差異。
 
 ## 開發
 
+需要 Xcode 26 以上（macOS 26 SDK）。沒有提供打包好的 App：沒有經過 Apple 公證（notarization），
+下載別人建置的 App 會被 macOS 擋下，請自己從原始碼建置。
+
 ```bash
 # 組成 build/Lisvo.app
 scripts/build-app.sh
@@ -115,3 +118,21 @@ swift run transcriber-cli 音檔.m4a --live --speed 1
 - `Sources/TranscriberCore`：音檔轉換、兩個辨識引擎、分講者、講者對應、潤飾、匯出、整體流程、即時字幕與即時翻譯、iPhone 收件
 - `Sources/TranscriberApp`：SwiftUI 介面
 - `Sources/transcriber-cli`：命令列測試工具
+
+## 第三方元件
+
+都不放在本專案裡：套件由 Swift Package Manager 建置時下載，模型由 App 第一次使用時下載。
+
+| 元件 | 用途 | 授權 |
+|---|---|---|
+| [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift) | 精準模式的 Whisper 執行環境 | MIT |
+| [Whisper large-v3-turbo（Core ML 版）](https://huggingface.co/argmaxinc/whisperkit-coreml) | 精準模式的辨識模型，原始模型為 OpenAI Whisper | MIT |
+| [FluidAudio](https://github.com/FluidInference/FluidAudio) | 分講者流程 | Apache 2.0 |
+| [speaker-diarization-coreml](https://huggingface.co/FluidInference/speaker-diarization-coreml) | 分講者模型，由 [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) 轉換 | CC BY 4.0 |
+| [swift-argument-parser](https://github.com/apple/swift-argument-parser) | WhisperKit 的相依套件 | Apache 2.0 |
+
+分講者方法出自 pyannote 分段（Plaquet & Bredin, 2023）、WeSpeaker 聲紋（Wang et al., 2023）與 VBx 分群（Landini et al., 2022）。
+
+## 授權
+
+[Apache License 2.0](LICENSE)，© 2026 ArchCross。「Lisvo」「聽哦」名稱與 App 圖示不隨授權開放當作商標使用，見 [NOTICE](NOTICE)。

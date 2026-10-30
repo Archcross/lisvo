@@ -1,0 +1,8 @@
+Lisvo（聽哦）
+Copyright 2026 ArchCross
+
+本專案以 Apache License 2.0 授權，全文見 LICENSE。
+本授權不包含把「Lisvo」「聽哦」名稱與 App 圖示當作商標使用的權利（Apache License 2.0 第 6 條）。
+
+第三方套件與模型由 Swift Package Manager 或 App 執行時從原處取得，不隨本專案散布；
+來源與授權見 README.md「第三方元件」。

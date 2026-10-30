@@ -3,6 +3,12 @@
 Mac 原生的語音轉文字 App：分講者、輸出時間軸。辨識、分講者與潤飾全部在本機處理；
 只有從 iPhone 分享的音檔和它的逐字稿會經過 iCloud 雲碟（見下方「從 iPhone 傳音檔」）。
 
+- 產品介紹：<https://archcross.com/tools/lisvo/>（English: <https://archcross.com/en/tools/lisvo/>）
+- 下載：[GitHub Releases](https://github.com/Archcross/lisvo/releases/latest)，免費。第一次打開的步驟見下方「安裝」。
+
+Free, open-source speech-to-text app for Mac. Transcribes recordings with speaker labels and timestamps,
+and shows live captions with translation, all on your Mac.
+
 ## 功能
 
 - **兩種辨識模式**

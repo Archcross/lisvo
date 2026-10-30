@@ -153,6 +153,15 @@ import Testing
     @Test func convertsSimplifiedToTraditional() {
         #expect(TextCleanup.toTraditional("我们讨论后台的发展") == "我們討論後台的發展")
     }
+
+    @Test func removesPlaceholderForUndecodableBytes() {
+        // 實測樣本：模型輸出「，」只吐出 EF BC 兩個位元組就接「我」，解碼後在「稿」與「我」之間多一個 U+FFFD。
+        let bytes: [UInt8] = [0xE7, 0xA8, 0xBF, 0xEF, 0xBC, 0xE6, 0x88, 0x91]
+        let decoded = String(decoding: bytes, as: UTF8.self)
+        #expect(decoded == "稿\u{FFFD}我")
+        #expect(TextCleanup.removingUndecodableBytes(decoded) == "稿我")
+        #expect(TextCleanup.removingUndecodableBytes("設計稿週三可以給。") == "設計稿週三可以給。")
+    }
 }
 
 @Suite struct WhisperRegionTests {

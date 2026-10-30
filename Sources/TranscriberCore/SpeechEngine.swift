@@ -81,6 +81,14 @@ enum TextCleanup {
         return ["zh", "yue"].contains { (detectedLanguage ?? "").hasPrefix($0) }
     }
 
+    /// Whisper 的詞表以位元組為單位，一個中文字或全形標點（UTF-8 三個位元組）常拆成幾個 token。
+    /// 模型偶爾只輸出前一兩個位元組就接下一個字（實測：全形逗號「，」只吐出 EF BC，缺最後的 8C），
+    /// 這幾個殘缺位元組解不出任何字，WhisperKit 解碼時以「�」（U+FFFD）佔位。缺的位元組模型根本沒輸出，
+    /// 無從還原；語音轉出的文字也不會合法地含有 U+FFFD，所以直接拿掉，不讓逐字稿出現亂碼。
+    static func removingUndecodableBytes(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{FFFD}", with: "")
+    }
+
     /// 選繁體中文時，把 Whisper 偶爾輸出的簡體字轉成繁體。只轉字形，不轉用語（「軟件」不會變「軟體」）。
     static func toTraditional(_ text: String) -> String {
         text.applyingTransform(StringTransform("Hans-Hant"), reverse: false) ?? text

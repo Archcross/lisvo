@@ -271,7 +271,7 @@ public struct WhisperEngine: SpeechEngine {
         // 模型自己判斷「這裡沒人說話」且信心很低時，多半是憑空生成的句子，丟掉。
         if segment.noSpeechProb > 0.6, segment.avgLogprob < -1.0 { return nil }
 
-        var text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = TextCleanup.removingUndecodableBytes(segment.text).trimmingCharacters(in: .whitespacesAndNewlines)
         if toTraditional { text = TextCleanup.toTraditional(text) }
         guard !text.isEmpty else { return nil }
 

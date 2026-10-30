@@ -1,5 +1,5 @@
 /* 系統語言是繁體中文時，Finder、Dock 與選單列顯示的名稱。其他語言用 Info.plist 的 Lisvo。 */
-CFBundleName = "聽哦";
-CFBundleDisplayName = "聽哦";
-/* 「關於聽哦」視窗與 Finder「取得資訊」顯示的版權文字。 */
+CFBundleName = "聽字";
+CFBundleDisplayName = "聽字";
+/* 「關於聽字」視窗與 Finder「取得資訊」顯示的版權文字。 */
 NSHumanReadableCopyright = "© 2026 ArchCross，以 Apache 2.0 授權";

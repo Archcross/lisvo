@@ -1,4 +1,4 @@
-# Lisvo（聽哦）
+# Lisvo（聽字）
 
 Mac 原生的語音轉文字 App：分講者、輸出時間軸。辨識、分講者與潤飾全部在本機處理；
 只有從 iPhone 分享的音檔和它的逐字稿會經過 iCloud 雲碟（見下方「從 iPhone 傳音檔」）。
@@ -135,4 +135,4 @@ swift run transcriber-cli 音檔.m4a --live --speed 1
 
 ## 授權
 
-[Apache License 2.0](LICENSE)，© 2026 ArchCross。「Lisvo」「聽哦」名稱與 App 圖示不隨授權開放當作商標使用，見 [NOTICE](NOTICE)。
+[Apache License 2.0](LICENSE)，© 2026 ArchCross。「Lisvo」「聽字」名稱與 App 圖示不隨授權開放當作商標使用，見 [NOTICE](NOTICE)。

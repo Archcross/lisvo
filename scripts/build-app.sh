@@ -20,7 +20,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/TranscriberApp" "$APP/Contents/MacOS/Transcriber"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 [[ -f "$ROOT/Resources/AppIcon.icns" ]] && cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/"
-# 各語言的 App 名稱（例如繁體中文顯示「聽哦」）。
+# 各語言的 App 名稱（例如繁體中文顯示「聽字」）。
 for lproj in "$ROOT/Resources"/*.lproj(N); do
   cp -R "$lproj" "$APP/Contents/Resources/"
 done

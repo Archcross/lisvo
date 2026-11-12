@@ -3,9 +3,8 @@ import SwiftUI
 
 /// 即時字幕的浮動視窗：永遠在最上層、全螢幕播放時也看得到、不搶走其他 App 的焦點，可以拖到任何位置。
 @MainActor
-final class SubtitleWindowController {
+final class SubtitleWindowController: NSObject, NSWindowDelegate {
     private var panel: NSPanel?
-    private var moveObserver: NSObjectProtocol?
 
     /// 使用者拖過字幕後的位置（視窗左下角，螢幕座標），下次開字幕放回同一個地方。
     private static let originKey = "subtitlePanelOrigin"
@@ -38,24 +37,21 @@ final class SubtitleWindowController {
             // 預設放在主螢幕下方置中，離底部 80 點，避開 Dock 與影片本身的控制列。
             panel.setFrameOrigin(NSPoint(x: screen.midX - size.width / 2, y: screen.minY + 80))
         }
-        // 拖完就記下位置；程式自己設定位置時也會觸發，存下的就是目前位置，不影響結果。
-        moveObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didMoveNotification,
-            object: panel,
-            queue: .main
-        ) { notification in
-            guard let window = notification.object as? NSWindow else { return }
-            UserDefaults.standard.set(NSStringFromPoint(window.frame.origin), forKey: Self.originKey)
-        }
+        // 拖完由 windowDidMove 記下位置；放好預設位置後才接上委派，開字幕本身不會蓋掉記下的位置。
+        panel.delegate = self
         panel.orderFrontRegardless()
         self.panel = panel
     }
 
     func hide() {
-        if let moveObserver { NotificationCenter.default.removeObserver(moveObserver) }
-        moveObserver = nil
+        panel?.delegate = nil
         panel?.orderOut(nil)
         panel = nil
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard let panel else { return }
+        UserDefaults.standard.set(NSStringFromPoint(panel.frame.origin), forKey: Self.originKey)
     }
 
     /// 上次拖到的位置；那個位置已經不在任何螢幕上（例如外接螢幕拔掉了）就不用，改回預設位置。

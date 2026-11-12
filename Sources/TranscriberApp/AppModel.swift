@@ -486,12 +486,18 @@ final class AppModel {
             speakerDetection: false,
             segments: finalSegments
         )
-        let folder = TranscriptionPipeline.uniqueFolder(in: outputDirectory, baseName: "即時字幕")
+        stageText = "用內容命名"
+        let naming = await Titler.outputName(for: transcript, fallback: "即時字幕")
+        let folder = TranscriptionPipeline.uniqueFolder(
+            in: outputDirectory,
+            baseName: naming.name,
+            date: liveStartedAt ?? Date()
+        )
         do {
-            _ = try Exporter.write(transcript, baseName: "即時字幕", to: folder)
+            _ = try Exporter.write(transcript, baseName: naming.name, to: folder)
             if let translated {
                 let text = LiveTranslationExport.text(segments: finalSegments, cache: translated, target: translationTarget)
-                try text.write(to: folder.appendingPathComponent("即時字幕_翻譯.txt"), atomically: true, encoding: .utf8)
+                try text.write(to: folder.appendingPathComponent("\(naming.name)_翻譯.txt"), atomically: true, encoding: .utf8)
             }
             phase = .finished(folder)
             stageText = "已存檔"

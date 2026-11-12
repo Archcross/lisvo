@@ -81,9 +81,6 @@ public enum TranscriptionPipeline {
             }
             : nil
 
-        let baseName = input.deletingPathExtension().lastPathComponent
-        let folder = uniqueFolder(in: settings.outputDirectory, baseName: baseName)
-
         do {
             let engine: any SpeechEngine = switch settings.engine {
             case .fast: AppleSpeechEngine()
@@ -158,8 +155,14 @@ public enum TranscriptionPipeline {
                 }
             }
 
+            // 用內容摘要當資料夾與檔名，錄音檔名常常看不出是哪一場；原檔名仍記在 JSON 的 sourceFileName。
+            onEvent(.stage(.transcription, "用內容命名"))
+            let naming = await Titler.outputName(for: transcript, fallback: input.deletingPathExtension().lastPathComponent)
+            if let notice = naming.notice { onEvent(.notice(notice)) }
+            let folder = uniqueFolder(in: settings.outputDirectory, baseName: naming.name, date: started)
+
             transcript.processingSeconds = Date().timeIntervalSince(started)
-            let files = try Exporter.write(transcript, baseName: baseName, to: folder)
+            let files = try Exporter.write(transcript, baseName: naming.name, to: folder)
             onEvent(.transcriptReady(transcript))
             return PipelineResult(outputFolder: folder, files: files, transcript: transcript)
         } catch {
@@ -187,12 +190,12 @@ public enum TranscriptionPipeline {
         }
     }
 
-    /// 每次轉錄放進自己的資料夾：「檔名 2026-10-28 2130」，同名時加序號。
-    public static func uniqueFolder(in directory: URL, baseName: String) -> URL {
+    /// 每次轉錄放進自己的資料夾：「名稱 2026-10-28 2130」，時間是開始轉錄（或開始即時字幕）的時間，同名時加序號。
+    public static func uniqueFolder(in directory: URL, baseName: String, date: Date) -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HHmm"
-        let stem = "\(baseName) \(formatter.string(from: Date()))"
+        let stem = "\(baseName) \(formatter.string(from: date))"
         var candidate = directory.appendingPathComponent(stem, isDirectory: true)
         var index = 2
         while FileManager.default.fileExists(atPath: candidate.path) {

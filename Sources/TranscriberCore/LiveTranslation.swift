@@ -268,7 +268,7 @@ public final class LiveTranslator: @unchecked Sendable {
     }
 }
 
-/// 即時字幕停止時，把譯文存成「即時字幕_翻譯.txt」：每段一行，前面是開始時間。
+/// 即時字幕停止時，把譯文存成「名稱_翻譯.txt」（名稱同逐字稿，見 Titler）：每段一行，前面是開始時間。
 public enum LiveTranslationExport {
     /// 某段已定案文字的完整譯文；還有句子沒翻好時回傳 nil。
     public static func translation(of segment: TranscriptSegment, cache: [String: String], target: TranslationTarget) -> String? {

@@ -209,10 +209,52 @@ import Testing
     @Test func uniqueFolderAddsCounterWhenTaken() throws {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
-        let first = TranscriptionPipeline.uniqueFolder(in: base, baseName: "會議")
+        let date = Date(timeIntervalSince1970: 1_793_000_000)
+        let first = TranscriptionPipeline.uniqueFolder(in: base, baseName: "會議", date: date)
         try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
-        let second = TranscriptionPipeline.uniqueFolder(in: base, baseName: "會議")
+        let second = TranscriptionPipeline.uniqueFolder(in: base, baseName: "會議", date: date)
         #expect(second.lastPathComponent == first.lastPathComponent + " (2)")
+    }
+}
+
+@Suite struct TitlerTests {
+    @Test func stripsPunctuationAndQuotes() {
+        #expect(Titler.sanitized("「新產品上市時程與分工討論。」", chinese: true) == "新產品上市時程與分工討論")
+        #expect(Titler.sanitized("新產品：上市時程/分工？", chinese: true) == "新產品上市時程分工")
+    }
+
+    @Test func keepsOnlyTheFirstLineAndJoinsChineseCharacters() {
+        #expect(Titler.sanitized("週會 確認 設計稿\n以上是標題", chinese: true) == "週會確認設計稿")
+        #expect(Titler.sanitized("AI 導入 進度回顧", chinese: true) == "AI 導入進度回顧")
+    }
+
+    @Test func capsLength() {
+        let long = "這是一個超過十五個字一定會被截斷的會議標題"
+        #expect(Titler.sanitized(long, chinese: true)?.count == Titler.maxChineseCharacters)
+        let english = "Quarterly planning meeting about product launch timelines owners risks and budget"
+        let cut = Titler.sanitized(english, chinese: false)
+        #expect((cut?.count ?? 0) <= Titler.maxLatinCharacters)
+        #expect(cut?.hasSuffix(" ") == false)
+    }
+
+    @Test func rejectsTooShortResults() {
+        #expect(Titler.sanitized("會議", chinese: true) == nil)
+        #expect(Titler.sanitized("。。", chinese: true) == nil)
+    }
+
+    @Test func excerptSamplesAcrossLongTranscripts() {
+        let sentences = (0..<200).map { "第\($0)句" + String(repeating: "字", count: 20) }
+        let text = Titler.excerpt(from: sentences, limit: 500)
+        #expect(text.count <= 500)
+        #expect(text.hasPrefix("第0句"))
+        // 不只取開頭：抽樣要涵蓋到後段。
+        #expect(text.contains("第1") && text.split(separator: "\n").count > 5)
+        let picked = text.split(separator: "\n").compactMap { Int($0.dropFirst().prefix { $0.isNumber }) }
+        #expect((picked.last ?? 0) > 100)
+    }
+
+    @Test func excerptKeepsShortTranscriptsWhole() {
+        #expect(Titler.excerpt(from: ["大家早", "  ", "開始開會"], limit: 1500) == "大家早\n開始開會")
     }
 }
 
